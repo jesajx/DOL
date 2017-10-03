@@ -268,6 +268,22 @@ object Dol {
       case _ =>
         ErrorType
     }
+
+    def typeProject(scope: CanonicalScope, x: Symbol, a: Symbol): Option[(CanonicalType, CanonicalType)] = for {
+      xType <- scope.get(x)
+      aType <- xType match {
+        case CanonicalObjType(y, _, yTypes, _) => yTypes.get(a)
+        case _ => None
+      }
+    } yield aType
+
+    def typeProjectUpper(scope: CanonicalScope, x: Symbol, a: Symbol): Option[CanonicalType] = for {
+      (_, aUpperType) <- typeProject(scope, x, a)
+    } yield aUpperType
+
+    def typeProjectLower(scope: CanonicalScope, x: Symbol, a: Symbol): Option[CanonicalType] = for {
+      (aLowerType, _) <- typeProject(scope, x, a)
+    } yield aLowerType
   }
 
 
@@ -632,23 +648,21 @@ object Dol {
 
     def canonicalFuture(f: ((CanonicalType) => Unit) => Unit) = CanonicalFuture(contFuture(f))
 
-    def typeProject(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: (CanonicalType, CanonicalType) => Unit): Unit = {
-      scope.get(x) match {
-        case Some(xType) =>
-          expandCanonicalFutureOnce(xType) {
-            case CanonicalObjType(y, _, yTypes, _) =>
-              yTypes.get(a) match {
-                case Some((aLowerType, aUpperType)) =>
-                  cont(aLowerType, aUpperType)
-                case None =>
-                  cont(canonicalError(), canonicalError())
-              }
-            case _ =>
-              cont(canonicalError(), canonicalError())
-          }
-        case None =>
-          cont(canonicalError(), canonicalError())
-      }
+    def typeProject(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: (CanonicalType, CanonicalType) => Unit): Unit = scope.get(x) match {
+      case Some(xType) =>
+        expandCanonicalFutureOnce(xType) {
+          case CanonicalObjType(y, _, yTypes, _) =>
+            yTypes.get(a) match {
+              case Some((aLowerType, aUpperType)) =>
+                cont(aLowerType, aUpperType)
+              case None =>
+                cont(canonicalError(), canonicalError())
+            }
+          case _ =>
+            cont(canonicalError(), canonicalError())
+        }
+      case None =>
+        cont(canonicalError(), canonicalError())
     }
 
     def typeProjectUpper(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: (CanonicalType) => Unit): Unit = {

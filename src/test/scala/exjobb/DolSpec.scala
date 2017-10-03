@@ -10,6 +10,7 @@ import org.scalacheck.Prop.BooleanOperators
 import org.scalacheck.Gen
 import org.scalacheck.Gen.const
 import org.scalacheck.Gen.oneOf
+import org.scalacheck.Gen.someOf
 import org.scalacheck.Gen.listOf
 import org.scalacheck.Arbitrary.arbitrary
 
@@ -61,11 +62,42 @@ object DolSpec extends Properties("DolSpec") {
   // TODO split Gen "size" into width and height using arbitrary int
   // 0..size-1.
 
-  def genCanonicalSubtype(su: SymbolUniverse, scope: CanonicalScope, supertype: CanonicalType): Gen[CanonicalType] = oneOf(
-    const(supertype),
-    const(CanonicalBot)
-    // TODO
-  )
+  // TODO def custom shrinks
+
+  def genCanonicalSupertype(su: SymbolUniverse, scope: CanonicalScope, supertype: CanonicalType): Gen[CanonicalType] = {
+    val extra: Seq[Gen[CanonicalType]] = supertype match {
+      case CanonicalFunType(x, xType, resType, projs) =>
+        Seq(for {
+          xSubtype <- genCanonicalSubtype(su, scope, xType)
+          resSupertype <- genCanonicalSupertype(su, scope + (x -> xSubtype), resType)
+          newProjs <- someOf(projs)
+          // TODO supertypes of projs? // remove/keep/supertype
+        } yield CanonicalFunType(x, xSubtype, resSupertype, newProjs.toSet))
+      //case CanonicalObjType(x, xFields, xTypes, xProjs) =>
+      //  ???
+      case _ =>
+        Seq()
+    }
+
+    oneOf(const(supertype), const(CanonicalTop), extra: _*)
+  }
+
+  def genCanonicalSubtype(su: SymbolUniverse, scope: CanonicalScope, supertype: CanonicalType): Gen[CanonicalType] = {
+    val extra: Seq[Gen[CanonicalType]] = supertype match {
+      case CanonicalFunType(x, xType, resType, projs) =>
+        Seq(for {
+          xSupertype <- genCanonicalSupertype(su, scope, xType)
+          resSubtype <- genCanonicalSubtype(su, scope + (x -> xType), resType)
+          // TODO subtypes of projs? // keep/subtype
+        } yield CanonicalFunType(x, xSupertype, resSubtype, projs))
+      //case CanonicalObjType(x, xFields, xTypes, xProjs) =>
+      //  ???
+      case _ =>
+        Seq()
+    }
+
+    oneOf(const(supertype), const(CanonicalBot), extra: _*)
+  }
 
   def genCanonicalDecl(su: SymbolUniverse, scope: CanonicalScope): Gen[CanonicalObjType] = oneOf(
     for {
@@ -112,18 +144,28 @@ object DolSpec extends Properties("DolSpec") {
 
   sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, typ: CanonicalType)
 
-  def genVarInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
-    // TODO vs picking something from scope
-    x <- const(su.newSymbol())
-    t <- genCanonicalType(su, Map())
-  } yield InferenceProblem(Var(x), CanonicalQue, scope + (x -> t), t)
+  def genVarInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = {
+    val justMakeSomethingUp = for {
+      x <- const(su.newSymbol())
+      t <- genCanonicalType(su, Map())
+    } yield InferenceProblem(Var(x), CanonicalQue, scope + (x -> t), t)
+    if (scope.isEmpty) {
+      justMakeSomethingUp
+    } else {
+      val pickSomethingFromScope = for {
+        x <- oneOf(scope.keys.toSeq)
+        t <- scope(x)
+      } yield InferenceProblem(Var(x), CanonicalQue, scope, t)
+      oneOf(justMakeSomethingUp, pickSomethingFromScope)
+    }
+  }
 
   def genSelInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = {
     val possibilities = scope.flatMap{
       case (x, CanonicalObjType(_, fields, _, _)) => fields.toList.map{case (a, aType) => (x, a, aType)}
       case _ => List()
     }.toSeq
-    if (possibilities.isEmpty) { // TODO some better way to do this? oneOf throws exceptions if possibilities is empty.
+    if (possibilities.isEmpty) { // TODO some better way to do this? oneOf throws exceptions if possibilities is empty. // TODO Gen.fail
       for {
         x <- 1
         if 1 == 0
@@ -143,7 +185,19 @@ object DolSpec extends Properties("DolSpec") {
   } yield InferenceProblem(Let(x, p1.term, p2.term), p2.prototype, p1.scope ++ p2.scope, p2.typ)
 
   // TODO def genObjInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] // TODO generate fun then def, or vice versa?
-  // TODO def genAppInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] // TODO search for funs in scope and generate term from argtype
+  // TODO def genAppInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] // TODO search for funs in scope and generate term from argtype // TODO gen arg, gen super of arg.type, gen function taking super giving {gen term with type}
+
+  //def genAppInferenceProblemFromScope(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = // TODO find function in scope (possibly as field in object), generate term with that argtype
+
+  def genAppInferenceProblemFromArg(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
+    f <- const(su.newSymbol())
+    x <- const(su.newSymbol())
+    y <- const(su.newSymbol())
+    arg <- genInferenceProblem(su, scope)
+    argSuper <- genCanonicalSupertype(su, scope, arg.typ)
+    res <- genInferenceProblem(su, scope + (x -> argSuper))
+  } yield InferenceProblem(Let(f, Fun(x, NoFuture.decanonicalize(argSuper), res.term), Let(y, arg.term, App(f, y))), res.prototype, arg.scope ++ res.scope - x, res.typ)
+
   def genFunInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
     x <- const(su.newSymbol)
     xCanonicalType <- genCanonicalType(su, scope) // TODO decanonicalize?
@@ -165,7 +219,8 @@ object DolSpec extends Properties("DolSpec") {
     //genObjInferenceProblem(su, scope),
     //genAppInferenceProblem(su, scope),
     genFunInferenceProblem(su, scope),
-    genFixedPointInferenceProblem(su, scope)
+    genFixedPointInferenceProblem(su, scope),
+    genAppInferenceProblemFromArg(su, scope)
   )
 
 //  property("var") = {
