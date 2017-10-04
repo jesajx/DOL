@@ -4,25 +4,31 @@ import Dol._
 
 import scala.annotation.tailrec
 import org.scalacheck.Properties
-import org.scalacheck.Prop.forAll
-import org.scalacheck.Prop.all
+import org.scalacheck.Prop
 import org.scalacheck.Prop.BooleanOperators
 import org.scalacheck.Gen
 import org.scalacheck.Gen.const
 import org.scalacheck.Gen.oneOf
 import org.scalacheck.Gen.someOf
 import org.scalacheck.Gen.listOf
-import org.scalacheck.Arbitrary.arbitrary
+import org.scalacheck.Shrink
 
 object DolSpec extends Properties("DolSpec") {
   val genCanonicalTop = const(CanonicalTop)
   val genCanonicalBot = const(CanonicalBot)
 
-  def genCanonicalFunType(su: SymbolUniverse, scope: CanonicalScope): Gen[CanonicalType] = for {
-    x <- su.newSymbol()
-    arg <- genCanonicalType(su, scope)
-    res <- genCanonicalType(su, scope + (x -> arg))
-  } yield CanonicalFunType(x, arg, res, Set())
+  def genCanonicalFunType(su: SymbolUniverse, scope: CanonicalScope): Gen[CanonicalType] = Gen.sized{ size =>
+    if (size < 3)
+      Gen.fail
+    else for {
+      x <- const(su.newSymbol())
+      subSize <- size - 1 // The fun-node itself counts as one. 1+argSize+resSize == size.
+      argSize <- Gen.choose(1, subSize)
+      resSize <- subSize - argSize
+      arg <- Gen.resize(argSize, genCanonicalType(su, scope))
+      res <- Gen.resize(resSize, genCanonicalType(su, scope + (x -> arg)))
+    } yield CanonicalFunType(x, arg, res, Set())
+  }
 
 
 //  sealed case class Graph(numNodes: Int, edges: Set[(Int, Int)])
@@ -64,61 +70,97 @@ object DolSpec extends Properties("DolSpec") {
 
   // TODO def custom shrinks
 
-  def genCanonicalSupertype(su: SymbolUniverse, scope: CanonicalScope, supertype: CanonicalType): Gen[CanonicalType] = {
-    val extra: Seq[Gen[CanonicalType]] = supertype match {
-      case CanonicalFunType(x, xType, resType, projs) =>
-        Seq(for {
-          xSubtype <- genCanonicalSubtype(su, scope, xType)
-          resSupertype <- genCanonicalSupertype(su, scope + (x -> xSubtype), resType)
-          newProjs <- someOf(projs)
-          // TODO supertypes of projs? // remove/keep/supertype
-        } yield CanonicalFunType(x, xSubtype, resSupertype, newProjs.toSet))
-      //case CanonicalObjType(x, xFields, xTypes, xProjs) =>
-      //  ???
-      case _ =>
-        Seq()
-    }
-
-    oneOf(const(supertype), const(CanonicalTop), extra: _*)
-  }
-
-  def genCanonicalSubtype(su: SymbolUniverse, scope: CanonicalScope, supertype: CanonicalType): Gen[CanonicalType] = {
-    val extra: Seq[Gen[CanonicalType]] = supertype match {
-      case CanonicalFunType(x, xType, resType, projs) =>
-        Seq(for {
-          xSupertype <- genCanonicalSupertype(su, scope, xType)
-          resSubtype <- genCanonicalSubtype(su, scope + (x -> xType), resType)
-          // TODO subtypes of projs? // keep/subtype
-        } yield CanonicalFunType(x, xSupertype, resSubtype, projs))
-      //case CanonicalObjType(x, xFields, xTypes, xProjs) =>
-      //  ???
-      case _ =>
-        Seq()
-    }
-
-    oneOf(const(supertype), const(CanonicalBot), extra: _*)
-  }
-
-  def genCanonicalDecl(su: SymbolUniverse, scope: CanonicalScope): Gen[CanonicalObjType] = oneOf(
-    for {
-      a <- su.newSymbol()
-      aType <- genCanonicalType(su, scope)
-    } yield CanonicalObjType(-1, Map(a -> aType), Map(), Set()),
-    for {
-      a <- su.newSymbol()
-      aUpperType <- genCanonicalType(su, scope)
-      aLowerType <- genCanonicalSubtype(su, scope, aUpperType)
-    } yield CanonicalObjType(-1, Map(), Map(a -> (aLowerType, aUpperType)), Set())
-  )
-
-  @tailrec
-  def genManyCanonicalDecls(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, numDecls: Int, curFields: Map[Symbol, CanonicalType], curTypes: Map[Symbol, (CanonicalType, CanonicalType)]): (Map[Symbol, CanonicalType], Map[Symbol, (CanonicalType, CanonicalType)]) = {
-    val objType = CanonicalObjType(z, curFields, curTypes, Set())
-    if (numDecls == 0) {
-      (curFields, curTypes)
+  def genCanonicalSupertype(su: SymbolUniverse, scope: CanonicalScope, subtype: CanonicalType): Gen[CanonicalType] = Gen.sized { size =>
+    if (size == 0)
+      Gen.fail
+    else if (size == 1) {
+      if (subtype.totNumNodes == 1)
+        oneOf(const(subtype), const(CanonicalTop))
+      else
+        const(CanonicalBot)
     } else {
-      val CanonicalObjType(_, fields, types, _) = genCanonicalDecl(su, scope + (z -> objType)).sample.get // TODO
-      genManyCanonicalDecls(su, scope, z, numDecls - 1, curFields ++ fields, curTypes ++ types)
+      val extra: Seq[Gen[CanonicalType]] = subtype match {
+        case CanonicalFunType(x, xType, resType, projs) if (size >= 3) =>
+          Seq(for {
+            subSize <- size - 1
+            argSize <- Gen.choose(1, subSize)
+            resSize <- subSize - argSize
+            xSubtype <- Gen.resize(argSize, genCanonicalSubtype(su, scope, xType))
+            resSupertype <- Gen.resize(resSize, genCanonicalSupertype(su, scope + (x -> xSubtype), resType))
+            newProjs <- const(Set()) //newProjs <- someOf(projs) // TODO
+            // TODO supertypes of projs? // remove/keep/supertype
+          } yield CanonicalFunType(x, xSubtype, resSupertype, newProjs.toSet))
+          //case CanonicalObjType(x, xFields, xTypes, xProjs) if (size >= 2) => // TODO remove decls. gen supertypes of existing decls
+        case _ =>
+          Seq()
+      }
+
+      oneOf(const(subtype), const(CanonicalTop), extra: _*)
+    }
+  }
+
+  def genCanonicalSubtype(su: SymbolUniverse, scope: CanonicalScope, supertype: CanonicalType): Gen[CanonicalType] = Gen.sized { size =>
+    if (size == 0)
+      Gen.fail
+    else if (size == 1) {
+      if (supertype.totNumNodes == 1)
+        oneOf(const(supertype), const(CanonicalBot))
+      else
+        const(CanonicalBot)
+    } else {
+      val extra: Seq[Gen[CanonicalType]] = supertype match {
+        case CanonicalFunType(x, xType, resType, projs) if (size >= 3) =>
+          Seq(for {
+            subSize <- size - 1
+            argSize <- Gen.choose(1, subSize)
+            resSize <- subSize - argSize
+            xSupertype <- Gen.resize(argSize, genCanonicalSupertype(su, scope, xType))
+            resSubtype <- Gen.resize(resSize, genCanonicalSubtype(su, scope + (x -> xType), resType))
+            // TODO subtypes of projs? // keep/subtype
+          } yield CanonicalFunType(x, xSupertype, resSubtype, projs))
+        //case CanonicalObjType(x, xFields, xTypes, xProjs) => // TODO gen new decls. gen subtypes of existing decls
+        case _ =>
+          Seq()
+      }
+
+      oneOf(const(supertype), const(CanonicalBot), extra: _*)
+    }
+  }
+
+  type FieldDeclMap = Map[Symbol, CanonicalType]
+  type TypeDeclMap = Map[Symbol, (CanonicalType, CanonicalType)]
+
+  def genCanonicalDecl(su: SymbolUniverse, scope: CanonicalScope): Gen[(FieldDeclMap, TypeDeclMap)] = Gen.sized{ size =>
+    val a = su.newSymbol()
+    val genField = for {
+      aType <- Gen.resize(size, genCanonicalType(su, scope))
+    } yield (Map(a -> aType), Map()): (FieldDeclMap, TypeDeclMap)
+    if (size >= 2) {
+      val genType = for {
+        upperSize <- Gen.choose(1, size-1)
+        lowerSize <- size - upperSize
+        aUpperType <- Gen.resize(upperSize, genCanonicalType(su, scope))
+        aLowerType <- Gen.resize(lowerSize, genCanonicalSubtype(su, scope, aUpperType))
+      } yield (Map(), Map(a -> (aLowerType, aUpperType))): (FieldDeclMap, TypeDeclMap)
+      oneOf(genField, genType)
+    } else {
+      genField
+    }
+  }
+
+  def genManyCanonicalDecls(su: SymbolUniverse, scope: CanonicalScope, z: Symbol): Gen[(FieldDeclMap, TypeDeclMap)] = Gen.sized { size =>
+    if (size <= 0) {
+      const(Map(), Map())
+    } else if (size == 1) {
+      genCanonicalDecl(su, scope)
+    } else {
+      for {
+        numLeft <- Gen.choose(1, size-1) // NOTE: non-empty.
+        numRight <- const(size - numLeft)
+        (leftFields, leftTypes) <- Gen.resize(numLeft, genManyCanonicalDecls(su, scope, z))
+        rightScope <- const(scope + (z -> CanonicalObjType(z, leftFields, leftTypes, Set())))
+        (rightFields, rightTypes) <- Gen.resize(numRight, genManyCanonicalDecls(su, rightScope, z))
+      } yield (leftFields ++ rightFields, leftTypes ++ rightTypes)
     }
   }
 
@@ -127,18 +169,53 @@ object DolSpec extends Properties("DolSpec") {
     for {
       x <- const(su.newSymbol())
 
-      numDecls <- Gen.choose(0, 100) // TODO base on size?
-      (fields, types) <- const(genManyCanonicalDecls(su, scope, x, numDecls, Map(), Map()))
+      (fields, types) <- Gen.resize(size - 1, genManyCanonicalDecls(su, scope, x))
+      // TODO also generate decls that are mutably recursive, by first generating types and then generating terms with those types.
 
-      projs <- const(Set[TypeProj]()) // TODO search all objects
+      projs <- const(Set[TypeProj]()) // TODO pick from types and from types of objects in scope
     } yield CanonicalObjType(x, fields, types, projs)
   }
 
-  def genCanonicalType(su: SymbolUniverse, scope: CanonicalScope): Gen[CanonicalType] =
-    oneOf(genCanonicalTop, genCanonicalBot, genCanonicalFunType(su, scope))
-    //oneOf(genCanonicalTop, genCanonicalBot, genCanonicalFunType(su, scope), genCanonicalObjType(su, scope))
+  // TODO generate non-canonical types. e.g. with intersections of multiple decls on the same member.
+  def genCanonicalType(su: SymbolUniverse, scope: CanonicalScope): Gen[CanonicalType] = Gen.sized { size =>
+    if (size == 0)
+      Gen.fail
+    else if (size == 1)
+      oneOf(genCanonicalTop, genCanonicalBot)
+    else
+      oneOf(genCanonicalTop, genCanonicalBot, genCanonicalFunType(su, scope), genCanonicalObjType(su, scope))
+  }
 
+//  def nextSubtype(su: SymbolUniverse, scope: CanonicalScope, tp: CanonicalType): Stream[CanonicalType] = tp match {
+//    case CanonicalFunType(x, CanonicalTop, CanonicalBot, EmptySet()) =>
+//      Some(CanonicalBot)
+//    case CanonicalFunType(x, xType, resType, projs) =>
+//      val shrinkArg = for {
+//        xSuperType <- nextSupertype(xType)
+//      } yield CanonicalFunType(x, xSuperType, resType, projs)
+//      val shrinkRes = for {
+//        resSubType <- nextSubtype(xType)
+//      } yield CanonicalFunType(x, xType, resSubType, projs)
+//      shrinkArg #::: shrinkRes
+//    case CanonicalBot =>
+//      Stream()
+//    case _ =>
+//      Stream(CanonicalBot)
+//  }
+//
+//  def nextSupertype(su: SymbolUniverse, scope: CanonicalScope, tp: CanonicalType): Stream[CanonicalType] = tp match {
+//    case CanonicalFunType(x, CanonicalBot, CanonicalTop, EmptySet()) =>
+//      Some(CanonicalTop)
+//    //case CanonicalFunType(x, xType, resType, projs) =>
+//    case _ =>
+//      None
+//  }
 
+  //def shrinkCanonicalType(su: SymbolUniverse, scope: CanonicalScope): Shrink[CanonicalType] = Shrink { typ =>
+  //  for {
+  //    subtype <- nextSubtype(typ)
+  //  } yield Stream(subtype)
+  //}
 
 
 
@@ -165,17 +242,12 @@ object DolSpec extends Properties("DolSpec") {
       case (x, CanonicalObjType(_, fields, _, _)) => fields.toList.map{case (a, aType) => (x, a, aType)}
       case _ => List()
     }.toSeq
-    if (possibilities.isEmpty) { // TODO some better way to do this? oneOf throws exceptions if possibilities is empty. // TODO Gen.fail
-      for {
-        x <- 1
-        if 1 == 0
-      } yield InferenceProblem(Var(x), CanonicalQue, Map(), CanonicalBot)
-    } else {
-      for {
-        someField <- oneOf(possibilities)
-        if (possibilities.size != 0)
-      } yield InferenceProblem(Sel(someField._1, someField._2), CanonicalQue, scope, someField._3)
-    }
+    if (possibilities.isEmpty)
+      Gen.fail
+    else for {
+      someField <- oneOf(possibilities)
+      if (possibilities.size != 0)
+    } yield InferenceProblem(Sel(someField._1, someField._2), CanonicalQue, scope, someField._3)
   }
 
   def genLetInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
@@ -188,6 +260,8 @@ object DolSpec extends Properties("DolSpec") {
   // TODO def genAppInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] // TODO search for funs in scope and generate term from argtype // TODO gen arg, gen super of arg.type, gen function taking super giving {gen term with type}
 
   //def genAppInferenceProblemFromScope(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = // TODO find function in scope (possibly as field in object), generate term with that argtype
+
+  //def genTermFromType
 
   def genAppInferenceProblemFromArg(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
     f <- const(su.newSymbol())
@@ -217,33 +291,96 @@ object DolSpec extends Properties("DolSpec") {
     genSelInferenceProblem(su, scope),
     genLetInferenceProblem(su, scope),
     //genObjInferenceProblem(su, scope),
-    //genAppInferenceProblem(su, scope),
     genFunInferenceProblem(su, scope),
     genFixedPointInferenceProblem(su, scope),
     genAppInferenceProblemFromArg(su, scope)
   )
 
-//  property("var") = {
-//    val su = new SymbolUniverse()
-//    val x = su.newSymbol
-//    forAll(genCanonicalType(su, Map())) { (t: CanonicalType) => // TODO gen type with symboluniverse?
-//      pinfer(su, Var(x), CanonicalQue, Map(x -> t)) == Some(t)
-//    }
-//  }
+  def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem): Stream[InferenceProblem] = problem match {
+    //case InferenceProblem(Fun(x, xType, Var(y)), prototype, scope, typ) if x == y =>
+    //  InferenceProblem(Var(y), xType, scope + (x -> xType), typ)
+    //case InferenceProblem(Let(x, xTerm, term), prototype, scope, typ) =>
+    // TODO if we know the type of xTerm: InferenceProblem(term, prototype, scope + (x -> xType), typ)
+    // TODO replace typ with subtype that does not reference x.
+    // TODO remove stuff in scope that are not referenced.
+    case _ =>
+      Stream()
+  }
 
-  property("meh") = {
+  property("positiveParallelInferenceProblem") = {
     val su = new SymbolUniverse()
-    forAll(genInferenceProblem(su, Map())) { (problem: InferenceProblem) =>
+    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem)) { (problem: InferenceProblem) =>
       val res = pinfer(su, problem.term, problem.prototype, problem.scope)
-      ("res = " + res + "") |: all(
-        res != None && NoFuture.canonicalEqualTypes(res.get, problem.typ)) // TODO comparison that does not depend on var names.
+      ("res = " + res + "") |: Prop.all(
+        res != None && NoFuture.canonicalEqualTypes(su, res.get, problem.typ)) // TODO comparison that does not depend on var names.
     }
   }
 
-  //property("let") = forAll(genTermAndType) { (et: TermAndType) =>
-  //  val su = new SymbolUniverse(1000) // TODO
-  //  val x = su.newSymbol
-  //  pinfer(su, Let(x, et.term, Var(x)), CanonicalQue, Map()) == Some(et.typ)
+  //property("genCanonicalTypeSizeIsConsistentWithDolNotionOfSize") = { // TODO better name
+  //  // TODO check that if we run a Gen[CanonicalType]-generator with size N,
+  //  // the resulting generate type has _.totNumNodes <= N
   //}
 
+  def shiv(): Unit = {
+    val su = new SymbolUniverse()
+    println(genCanonicalObjType(su, Map()).sample)
+  }
+
 }
+/* TODO:
+
+[info] Compiling 1 Scala source to /home/jesajx/prg/exjobb-code/target/scala-2.11/test-classes...
+[info] ! DolSpec.positiveInferenceProblem: Falsified after 21 passed tests.
+[info] > Labels of failing property:
+[info] res = None
+[info] > ARG_0: InferenceProblem(Fun(2,FunType(5,Bot,ErrorType),Var(2)),CanonicalQue,Map(2 -> CanonicalFunType(5,CanonicalBot,CanonicalObjType(8,Map(),Map(),Set()),Set())),CanonicalFunType(2,CanonicalFunType(5,CanonicalBot,CanonicalObjType(8,Map(),Map(),Set()),Set()),CanonicalFunType(5,CanonicalBot,CanonicalObjType(8,Map(),Map(),Set()),Set()),Set()))    // TODO "ErrorType"???? why?
+[info] Failed: Total 1, Failed 1, Errors 0, Passed 0
+[error] Failed tests:
+[error]         exjobb.DolSpec
+[error] (root/test:test) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 1 s, completed Oct 4, 2017 12:01:07 PM
+
+
+[info] Compiling 1 Scala source to /home/jesajx/prg/exjobb-code/target/scala-2.11/classes...
+[info] ! DolSpec.positiveParallelInferenceProblem: Falsified after 1 passed tests.
+[info] > Labels of failing property:
+[info] res = None
+[info] > ARG_0: InferenceProblem(
+  Let(4,Fun(5,Bot,Fun(14,RecType(17,AndType(AndType(AndType(AndType(AndType(AndType(AndType(FieldDecl(24,Top),FieldDecl(25,Bot)),FieldDecl(20,Bot)),FieldDecl(21,Top)),FieldDecl(22,Top)),FieldDecl(18,Top)),FieldDecl(23,Bot)),FieldDecl(19,Bot))),Var(14))),Let(6,Var(7),App(4,6))),
+  CanonicalQue,Map(7 -> CanonicalBot, 14 -> CanonicalObjType(17,Map(24 -> CanonicalTop, 25 -> CanonicalBot, 20 -> CanonicalBot, 21 -> CanonicalTop, 22 -> CanonicalTop, 18 -> CanonicalTop, 23 -> CanonicalBot, 19 -> CanonicalBot),Map(),Set())),
+  CanonicalFunType(14,CanonicalObjType(17,Map(24 -> CanonicalTop, 25 -> CanonicalBot, 20 -> CanonicalBot, 21 -> CanonicalTop, 22 -> CanonicalTop, 18 -> CanonicalTop, 23 -> CanonicalBot, 19 -> CanonicalBot),Map(),Set()),CanonicalObjType(17,Map(24 -> CanonicalTop, 25 -> CanonicalBot, 20 -> CanonicalBot, 21 -> CanonicalTop, 22 -> CanonicalTop, 18 -> CanonicalTop, 23 -> CanonicalBot, 19 -> CanonicalBot),Map(),Set()),Set()))
+[info] Failed: Total 1, Failed 1, Errors 0, Passed 0
+[error] Failed tests:
+[error]         exjobb.DolSpec
+[error] (root/test:test) sbt.TestsFailedException: Tests unsuccessful
+
+
+  Let(4,
+      Fun(5,
+          Bot,
+          Fun(14,
+            RecType(17,
+              andType(
+                FieldDecl(24,Top),
+                FieldDecl(25,Bot),
+                FieldDecl(20,Bot),
+                FieldDecl(21,Top),
+                FieldDecl(22,Top),
+                FieldDecl(18,Top),
+                FieldDecl(23,Bot),
+                FieldDecl(19,Bot))),
+            Var(14))),
+      Let(6,Var(7),App(4,6))),
+
+  : CanonicalFunType(14,
+      CanonicalObjType(17,
+        Map(24 -> CanonicalTop, 25 -> CanonicalBot, 20 -> CanonicalBot, 21 -> CanonicalTop, 22 -> CanonicalTop, 18 -> CanonicalTop, 23 -> CanonicalBot, 19 -> CanonicalBot),
+        Map(),
+        Set()),
+      CanonicalObjType(17,
+        Map(24 -> CanonicalTop, 25 -> CanonicalBot, 20 -> CanonicalBot, 21 -> CanonicalTop, 22 -> CanonicalTop, 18 -> CanonicalTop, 23 -> CanonicalBot, 19 -> CanonicalBot),
+        Map(),
+        Set()),
+      Set()))
+
+*/

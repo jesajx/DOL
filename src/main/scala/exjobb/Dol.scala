@@ -25,7 +25,7 @@ object Dol {
 
   sealed trait Tree {
     val treeHeight: Int
-    val totNumSubnodes: Int
+    val totNumNodes: Int
     // TODO
   }
   sealed trait Expr extends Tree {
@@ -50,7 +50,7 @@ object Dol {
   // Term ::=
   case class Var(x: Symbol) extends Term {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -59,7 +59,7 @@ object Dol {
   }
   case class App(x: Symbol, y: Symbol) extends Term {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -68,7 +68,7 @@ object Dol {
   }
   case class Let(x: Symbol, xTerm: Term, t: Term) extends Term {
     val treeHeight = 1 + math.max(xTerm.treeHeight, t.treeHeight)
-    val totNumSubnodes = 1 + xTerm.totNumSubnodes + t.totNumSubnodes
+    val totNumNodes = 1 + xTerm.totNumNodes + t.totNumNodes
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -77,7 +77,7 @@ object Dol {
   }
   case class Sel(x: Symbol, a: Symbol) extends Term {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -88,7 +88,7 @@ object Dol {
   // Value ::=
   case class Obj(x: Symbol, xType: Type, body: Def) extends Value {
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
-    val totNumSubnodes = 1 + xType.totNumSubnodes + body.totNumSubnodes
+    val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -97,7 +97,7 @@ object Dol {
   }
   case class Fun(x: Symbol, xType: Type, body: Term) extends Value {
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
-    val totNumSubnodes = 1 + xType.totNumSubnodes + body.totNumSubnodes
+    val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -108,7 +108,7 @@ object Dol {
   // Def ::=
   case class FieldDef(a: Symbol, aTerm: Term) extends Def {
     val treeHeight = 1 + aTerm.treeHeight
-    val totNumSubnodes = 1 + aTerm.totNumSubnodes
+    val totNumNodes = 1 + aTerm.totNumNodes
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -117,7 +117,7 @@ object Dol {
   }
   case class TypeDef(a: Symbol, aType: Type) extends Def {
     val treeHeight = 1 + aType.treeHeight
-    val totNumSubnodes = 1 + aType.totNumSubnodes
+    val totNumNodes = 1 + aType.totNumNodes
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -126,7 +126,7 @@ object Dol {
   }
   case class AndDef(left: Def, right: Def)  extends Def {
     val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
-    val totNumSubnodes = 1 + left.totNumSubnodes + right.totNumSubnodes
+    val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
     def withType(typ: CanonicalType) = {
       val res = this.copy()
       res.assignedType = typ
@@ -137,35 +137,35 @@ object Dol {
   // Type ::=
   case object Bot extends Type {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case object Top extends Type {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case class TypeProj(x: Symbol, a: Symbol) extends Type {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case class FunType(x: Symbol, xType: Type, resType: Type) extends Type {
     val treeHeight = 1 + math.max(xType.treeHeight, resType.treeHeight)
-    val totNumSubnodes = 1 + xType.totNumSubnodes + resType.totNumSubnodes
+    val totNumNodes = 1 + xType.totNumNodes + resType.totNumNodes
   }
   case class RecType(x: Symbol, xType: Type) extends Type {
     val treeHeight = 1 + xType.treeHeight
-    val totNumSubnodes = 1 + xType.totNumSubnodes
+    val totNumNodes = 1 + xType.totNumNodes
   }
   case class AndType(left: Type, right: Type) extends Type {
     val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
-    val totNumSubnodes = 1 + left.totNumSubnodes + right.totNumSubnodes
+    val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
   }
   case class FieldDecl(a: Symbol, aType: Type) extends Type {
     val treeHeight = 1 + aType.treeHeight
-    val totNumSubnodes = 1 + aType.totNumSubnodes
+    val totNumNodes = 1 + aType.totNumNodes
   }
   case class TypeDecl(a: Symbol, aLowerType: Type, aUpperType: Type) extends Type {
     val treeHeight = 1 + math.max(aLowerType.treeHeight, aUpperType.treeHeight)
-    val totNumSubnodes = 1 + aLowerType.treeHeight + aUpperType.treeHeight
+    val totNumNodes = 1 + aLowerType.treeHeight + aUpperType.treeHeight
   }
 
 
@@ -175,32 +175,32 @@ object Dol {
   // TODO what about TypeProj that is not an object?
   case class CanonicalObjType(x: Symbol, xFields: Map[Symbol, CanonicalType], xTypes: Map[Symbol, (CanonicalType, CanonicalType)], xProjs: Set[TypeProj]) extends CanonicalType { // TODO store scope? // TODO aka "ScaryIntersectionType"
     val treeHeight = 1 + (xFields.values ++ xTypes.values.flatMap{pairToList}).map{_.treeHeight}.fold(0){math.max}
-    val totNumSubnodes = 1 + (xFields.values ++ xTypes.values.flatMap{pairToList}).map{_.totNumSubnodes}.sum + xProjs.size
+    val totNumNodes = 1 + (xFields.values ++ xTypes.values.flatMap{pairToList}).map{_.totNumNodes}.sum + xProjs.size
   }
   case class CanonicalFunType(x: Symbol, xType: CanonicalType, resType: CanonicalType, alias: Set[TypeProj]) extends CanonicalType { // TODO differentiate between projs that have subtypes and projs that don't (opaqueProjs). TODO maybe Map[TypeProj, (Option[CanonicalObjType], Option[CanonicalObjType])]
     val treeHeight = 1 + max(xType.treeHeight, resType.treeHeight, 2)
-    val totNumSubnodes = 1 + xType.totNumSubnodes + resType.totNumSubnodes + alias.size
+    val totNumNodes = 1 + xType.totNumNodes + resType.totNumNodes + alias.size
   }
   case object CanonicalTop extends CanonicalType {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case object CanonicalBot extends CanonicalType {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case object CanonicalErrorType extends CanonicalType {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case class CanonicalFuture(cell: Meh[CanonicalType]) extends CanonicalType {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   type CanonicalPrototype = CanonicalType
   case object CanonicalQue extends CanonicalPrototype {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
 
   object NoFuture {
@@ -230,23 +230,35 @@ object Dol {
         t
     }
 
-    def canonicalEqualTypes(first: CanonicalType, second: CanonicalType): Boolean = (first, second) match {
-      case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) =>
-        false // TODO rename and then compare
+    def canonicalEqualTypes(su: SymbolUniverse, first: CanonicalType, second: CanonicalType): Boolean = (first, second) match {
+      case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x != y =>
+        val z = su.newSymbol()
+        canonicalEqualTypes(su,
+          NoFuture.canonicalRenameToUniqueVar(x, z, CanonicalObjType(z, xFields, xTypes, xProjs)),
+          NoFuture.canonicalRenameToUniqueVar(y, z, CanonicalObjType(z, yFields, yTypes, yProjs)))
+      case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x == y =>
+        (xFields.keys == yFields.keys
+          && xTypes.keys == yTypes.keys
+          && mapIntersect(xFields, yFields){canonicalEqualTypes(su, _, _)}.forall{_._2}
+          && mapIntersect(xTypes, yTypes){
+            case ((xALower, xAUpper), (yALower, yAUpper)) =>
+              (canonicalEqualTypes(su, xALower, yALower)
+                && canonicalEqualTypes(su, xAUpper, yAUpper))
+          }.forall{_._2}
+          && xProjs == yProjs)
       case (CanonicalFunType(x, xType, xResType, xAlias), CanonicalFunType(y, yType, yResType, yAlias)) if x != y =>
-        val z = -1 // TODO
-        canonicalEqualTypes(
+        val z = su.newSymbol()
+        canonicalEqualTypes(su,
           NoFuture.canonicalRenameToUniqueVar(x, z, CanonicalFunType(z, xType, xResType, xAlias)),
           NoFuture.canonicalRenameToUniqueVar(y, z, CanonicalFunType(z, yType, yResType, yAlias)))
       case (CanonicalFunType(x, xType, xResType, xAlias), CanonicalFunType(y, yType, yResType, yAlias)) if x == y =>
-        canonicalEqualTypes(xType, yType) && canonicalEqualTypes(xResType, yResType) && xAlias == yAlias
+        (canonicalEqualTypes(su, xType, yType)
+          && canonicalEqualTypes(su, xResType, yResType)
+          && xAlias == yAlias)
       case (CanonicalTop, CanonicalTop) => true
       case (CanonicalBot, CanonicalBot) => true
       case (CanonicalQue, CanonicalQue) => true
-      case _ =>
-        false // TODO
-        //case _ =>
-        //  ErrorType
+      case _ => false
     }
 
     def decanonicalize(typ: CanonicalType): Type = typ match {
@@ -309,16 +321,16 @@ object Dol {
   type Prototype = Type
   case object Que extends Prototype {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
 
   case object ErrorType extends Type { // TODO vs some other errorhandling?
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
   }
   case class FutureType(cell: Meh[Type]) extends Type {
     val treeHeight = 1
-    val totNumSubnodes = 1
+    val totNumNodes = 1
     // TODO approximations
   }
 
@@ -371,6 +383,43 @@ object Dol {
     }
   }
 
+  def mapUnion[K, T, A <: T, B <: T](a: Map[K, A], b: Map[K, B])(f: (A, B) => T): Map[K, T] = {
+    a ++ b.map{
+      case (k, kValueInB) =>
+        k -> (a.get(k) match {
+          case Some(kValueInA) =>
+            f(kValueInA, kValueInB)
+          case None =>
+            kValueInB
+        })
+    }
+  }
+
+  def mapIntersect[K, T, A, B](a: Map[K, A], b: Map[K, B])(f: (A, B) => T): Map[K, T] = {
+    b.flatMap{
+      case (k, kValueInB) =>
+        a.get(k) match {
+          case Some(kValueInA) =>
+            Some(k -> f(kValueInA, kValueInB))
+          case None =>
+            None
+        }
+    }
+  }
+
+  // TODO decanonicalize?
+
+  object EmptyMap {
+    def unapply[K, V](x: Map[K, V]): Boolean = {
+      x.isEmpty
+    }
+  }
+
+  object EmptySet {
+    def unapply[K](x: Set[K]): Boolean = {
+      x.isEmpty
+    }
+  }
 
   class SymbolUniverse(init: Int = 0) {
     val counter = new AtomicInteger(init)
@@ -742,7 +791,7 @@ object Dol {
         // TODO point y to new skeletal object
         canonicalRenameToUniqueVar(y, z, CanonicalObjType(z, yFields, yTypes, yProjs)){
           case CanonicalObjType(_, yFields, yTypes, yProjs) =>
-            val localScope = Map(x -> t, z -> zType) // TODO bad to put prototype in scope? // TODO reference result of canonicalRaise instead?
+            val localScope = Map(x -> t, z -> zType)
             val xIsMissingFields = yFields.exists{case (a, _) => !xFields.contains(a)}
             val xIsMissingTypes = yTypes.exists{case (a, _) => !xTypes.contains(a)}
             if (xIsMissingFields || xIsMissingTypes) {
@@ -765,15 +814,13 @@ object Dol {
               }.toMap
 
               upperTypeProjections(scope, t){upperProjs =>
-                lowerTypeProjections(scope, t){lowerProjs => // TODO is it correct to use lower?
-                  val missingProjs = yProjs -- (lowerProjs ++ upperProjs).map{
-                    case TypeProj(w, a) if w == x => TypeProj(z, a)
-                    case u => u
-                  }
-                  missingProjs.foreach{case TypeProj(r, a) =>
-                    typeProjectLower(localScope, r, a){
-                      ???
-                    }
+                val missingProjs = yProjs -- upperProjs.map{
+                  case TypeProj(w, a) if w == x => TypeProj(z, a)
+                  case u => u
+                }
+                missingProjs.foreach{case TypeProj(r, a) =>
+                  typeProjectLower(localScope, r, a){
+                    ???
                   }
                 }
               }
@@ -824,68 +871,79 @@ object Dol {
     }
 
     def canonicalLower(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: (CanonicalType) => Unit): Unit = (t, p) match {
-//      case (t @ CanonicalObjType(x, xFields, xTypes, xProjs), p @ CanonicalObjType(y, yFields, yTypes, yProjs)) =>
-//        val z = symbolUniverse.newSymbol()
-//        val zCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
-//        val zType = CanonicalFuture(zCompleter.cell)
-//
-//        // TODO point y to new skeletal object
-//        canonicalRenameToUniqueVar(y, z, CanonicalObjType(z, yFields, yTypes, yProjs)){
-//          case CanonicalObjType(_, yFields, yTypes, yProjs) =>
-//            val localScope = Map(x -> t, z -> zType) // TODO bad to put prototype in scope? // TODO reference result of canonicalRaise instead?
-//            val xIsMissingFields = yFields.exists{case (a, _) => !xFields.contains(a) || xFields(a) == Set()}
-//            val xIsMissingTypes = yTypes.exists{case (a, _) => !xTypes.contains(a) || xTypes(a) == Set()}
-//            if (xIsMissingFields || xIsMissingTypes) {
-//              cont(canonicalError())
-//            } else {
-//
-//
-//              // TODO
-//              // t <: A <: y.T
-//              // t <: A <: y.T
-//
-//
-//              // TODO okay to add TypeDecls when raising, but not okay to add FieldDecls?
-//              val fields = yFields.map{case (a, aPrototype) =>
-//                xFields.get(a) match {
-//                  case Some(aType) => a -> canonicalFuture{canonicalRaise(localScope, aType, aPrototype)(_)}
-//                  case None => (a, canonicalError())
-//                }
-//              }.toMap
-//              val types = yTypes.map{case (a, (aLowerPrototype, aUpperPrototype)) =>
-//                xTypes.get(a) match {
-//                  case Some((aLowerType, aUpperType)) =>
-//                    a -> (canonicalFuture{canonicalRaise(localScope, aLowerType, aLowerPrototype)(_)},
-//                          canonicalFuture{canonicalRaise(localScope, aUpperType, aUpperPrototype)(_)})
-//                  case None => a -> (canonicalError(), canonicalError())
-//                }
-//              }.toMap
-//
-//              // TODO check lower too
-//              upperTypeProjections(scope, t){upperProjs =>
-//                lowerTypeProjections(scope, t){lowerProjs =>
-//                  val missingProjs = yProjs -- (lowerProjs ++ upperProjs).map{
-//                    case TypeProj(w, a) if w == x => TypeProj(z, a)
-//                    case u => u
-//                  }
-//                  missingProjs.foreach{case TypeProj(r, a) =>
-//                    typeProjectLower(localScope, r, a){
-//                      ???
-//                    }
-//                  }
-//                }
-//              }
-//
-//
-//              // continue while checking projs in background.
-//              val projs = yProjs
-//
-//              zCompleter.putFinal(CanonicalObjType(y, fields, types, projs))
-//              cont(zType)
-//            }
-//          case _ =>
-//            ???
-//        }
+      case (t @ CanonicalObjType(x, xFields, xTypes, xProjs), p @ CanonicalObjType(y, yFields, yTypes, yProjs)) =>
+        val z = symbolUniverse.newSymbol()
+        val zCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
+        val zType = CanonicalFuture(zCompleter.cell)
+
+        // TODO point y to new skeletal object
+        canonicalRenameToUniqueVar(y, z, CanonicalObjType(z, yFields, yTypes, yProjs)){
+          case CanonicalObjType(_, yFields, yTypes, yProjs) =>
+            val localScope = Map(x -> t, z -> zType)
+
+
+            // Note: Subtyping a object means ADDING decls. We are no allowed
+            // to remove decls. Therefore y must have all decls, and may also have
+            // some decls that x does not have yet.
+            val yIsMissingFields = xFields.keys.exists{!yFields.contains(_)}
+            val yIsMissingTypes = xTypes.keys.exists{!yTypes.contains(_)}
+            // TODO check if the missing decls are in typeprojections.
+            if (yIsMissingFields || yIsMissingTypes) {
+              cont(canonicalError())
+            } else {
+              val loweredFields = xFields.map{case (a, aType) =>
+                yFields.get(a) match {
+                  case Some(aPrototype) => a -> canonicalFuture{canonicalLower(localScope, aType, aPrototype)(_)}
+                  case None => (a, canonicalError())
+                }
+              }.toMap
+              val loweredTypes = xTypes.map{case (a, (aLowerType, aUpperType)) =>
+                yTypes.get(a) match {
+                  case Some((aLowerPrototype, aUpperPrototype)) =>
+                    a -> (canonicalFuture{canonicalRaise(localScope, aLowerType, aLowerPrototype)(_)},
+                          canonicalFuture{canonicalLower(localScope, aUpperType, aUpperPrototype)(_)})
+                  case None => a -> (canonicalError(), canonicalError())
+                }
+              }.toMap
+
+
+              val newFields = (yFields -- xFields.keys).map{case (a, aPrototype) =>
+                a -> canonicalFuture{
+                  canonicalLower(localScope, CanonicalTop, aPrototype)(_)
+                }
+              }
+              val newTypes = (yTypes -- xTypes.keys).map{case (a, (aLowerPrototype, aUpperPrototype)) =>
+                a -> (canonicalFuture{
+                  canonicalRaise(localScope, CanonicalBot, aLowerPrototype)(_)
+                }, canonicalFuture{
+                  canonicalLower(localScope, CanonicalTop, aUpperPrototype)(_)
+                })
+              }
+
+              val fields = loweredFields ++ newFields
+              val types = loweredTypes ++ newTypes
+
+              lowerTypeProjections(scope, zType){lowerProjs =>
+                val missingProjs = yProjs -- lowerProjs.map{
+                  case TypeProj(w, a) if w == x => TypeProj(z, a)
+                  case u => u
+                }
+                missingProjs.foreach{case TypeProj(r, a) =>
+                  typeProjectUpper(localScope, r, a){
+                    ??? // TODO
+                  }
+                }
+              }
+
+              // continue while checking projs in background.
+              val projs = yProjs
+
+              zCompleter.putFinal(CanonicalObjType(y, fields, types, projs))
+              cont(zType)
+            }
+          case _ =>
+            ???
+        }
       case (CanonicalFunType(x, xType, xResType, xProjs), CanonicalFunType(y, yType, yResType, yProjs)) if x != y =>
         val z = symbolUniverse.newSymbol()
         val newXResType = CanonicalFuture(contFuture{ canonicalRenameToUniqueVar(x, z, xResType)(_) })
@@ -913,8 +971,8 @@ object Dol {
 //        ???
 //      case (CanonicalTop, CanonicalObjType(x, xFields, xTypes, xProjs)) =>
 //        ???
-//      case _ =>
-//        cont(canonicalError())
+      case _ =>
+        cont(canonicalError())
     }
 
     def expandCanonicalFutureTypes(t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
@@ -975,43 +1033,6 @@ object Dol {
       }
     }
 
-    def mapUnion[K, T, A <: T, B <: T](a: Map[K, A], b: Map[K, B])(f: (A, B) => T): Map[K, T] = {
-      a ++ b.map{
-        case (k, kValueInB) =>
-          k -> (a.get(k) match {
-            case Some(kValueInA) =>
-              f(kValueInA, kValueInB)
-            case None =>
-              kValueInB
-          })
-      }
-    }
-
-    def mapIntersect[K, T, A <: T, B <: T](a: Map[K, A], b: Map[K, B])(f: (A, B) => T): Map[K, T] = {
-      a ++ b.flatMap{
-        case (k, kValueInB) =>
-          a.get(k) match {
-            case Some(kValueInA) =>
-              Some(k -> f(kValueInA, kValueInB))
-            case None =>
-             None
-          }
-      }
-    }
-
-    // TODO decanonicalize?
-
-    object EmptyMap {
-      def unapply[K, V](x: Map[K, V]): Boolean = {
-        x.isEmpty
-      }
-    }
-
-    object EmptySet {
-      def unapply[K](x: Set[K]): Boolean = {
-        x.isEmpty
-      }
-    }
 
     def contFold[A](first: ((A) => Unit) => Unit, seq: List[((A) => Unit) => Unit])(f: (A, A) => ((A) => Unit) => Unit)(cont: (A) => Unit): Unit = {
       seq match {
@@ -1369,25 +1390,31 @@ object Dol {
     // TODO replace killScope:Scope with killSet:Set[Symbol]?
     def eliminateScopeUp(scope: CanonicalScope, killScope: CanonicalScope, t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
       case CanonicalObjType(x, xFields, xTypes, xProjs) =>
-        ???
-//      case CanonicalObjType(x, xFields, xTypes, xProjs) if !killScope.contains(x) =>
-//        val localScope = scope + (x -> t)
-//
-//        val fields = xFields.map{case (a, aType) =>
-//          eliminateScopeUp(localScope, killScope, aType)(_) // TODO
-//        }
-//        val types = xTypes.map{case (a, (aLowerType, aUpperType)) =>
-//          eliminateScopeDown(localScope, killScope, aLowerType)(_) // TODO
-//          eliminateScopeUp(localScope, killScope, aUpperType)(_) // TODO
-//        }
-//
-//        val projs = xProjs.map{
-//          case TypeProj(y, a) if killScope.contains(y) =>
-//            typeProjectUpper(localScope, y, a)(_) // TODO
-//          case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
-//        }
-//        CanonicalObjType(x, fields, types, Set()) // TODO canonicalLeastCommonSupertype(..., projs)
-//
+        val localKillScope = killScope - x
+        val localScope = scope + (x -> t)
+
+        val fields = xFields.map{case (a, aType) =>
+          a -> canonicalFuture{
+            eliminateScopeUp(localScope, localKillScope, aType)(_) // TODO
+          }
+        }
+        val types = xTypes.map{case (a, (aLowerType, aUpperType)) =>
+          a -> (canonicalFuture{eliminateScopeDown(localScope, localKillScope, aLowerType)(_)},
+                canonicalFuture{eliminateScopeUp(localScope, localKillScope, aUpperType)(_)})
+        }
+
+        val projs = xProjs.map{
+          case TypeProj(y, a) if localKillScope.contains(y) =>
+            canonicalFuture{c =>
+              typeProjectUpper(localScope, y, a){aUpperType =>
+                // TODO Check if aUpperType ----> TypeProj(y, a) again and
+                // raise to Top as necessary. Otherwise this may recurse infinitely...
+                eliminateScopeUp(scope, localKillScope, aUpperType)(c)
+              }
+            }
+          case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
+        }
+        cont(CanonicalObjType(x, fields, types, Set())) // TODO canonicalLeastCommonSupertype(..., projs)
       case CanonicalFunType(x, xType, resType, alias) =>
         val newXType = canonicalFuture{
           eliminateScopeDown(scope, killScope, xType)(_) // TODO
@@ -1411,25 +1438,30 @@ object Dol {
 
     def eliminateScopeDown(scope: CanonicalScope, killScope: CanonicalScope, t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
       case CanonicalObjType(x, xFields, xTypes, xProjs) =>
-        ???
-//      case CanonicalObjType(x, xFields, xTypes, xProjs) if !killScope.contains(x) =>
-//        val localScope = scope + (x -> t)
-//
-//        val fields = xFields.map{case (a, aType) =>
-//          eliminateScopeDown(localScope, killScope, aType)(_) // TODO
-//        }
-//        val types = xTypes.map{case (a, (aLowerType, aUpperType)) =>
-//          eliminateScopeUp(localScope, killScope, aLowerType)(_) // TODO
-//          eliminateScopeDown(localScope, killScope, aUpperType)(_) // TODO
-//        }
-//
-//        val projs = xProjs.map{
-//          case TypeProj(y, a) if killScope.contains(y) =>
-//            typeProjectLower(localScope, y, a)(_) // TODO
-//          case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
-//        }
-//        CanonicalObjType(x, fields, types, Set()) // TODO glb(..., projs)
-//
+        val localKillScope = killScope - x
+        val localScope = scope + (x -> t)
+
+        val fields = xFields.map{case (a, aType) =>
+          a -> canonicalFuture{
+            eliminateScopeDown(localScope, localKillScope, aType)(_) // TODO
+          }
+        }
+        val types = xTypes.map{case (a, (aLowerType, aUpperType)) =>
+          a -> (canonicalFuture{eliminateScopeUp(localScope, localKillScope, aLowerType)(_)},
+                canonicalFuture{eliminateScopeDown(localScope, localKillScope, aUpperType)(_)})
+        }
+
+        val projs = xProjs.map{
+          case TypeProj(y, a) if localKillScope.contains(y) =>
+            canonicalFuture{c =>
+              typeProjectLower(localScope, y, a){aUpperType =>
+                // TODO Check if aUpperType ----> TypeProj(y, a) again and
+                // raise to Top as necessary. Otherwise this may recurse infinitely...
+                eliminateScopeDown(scope, localKillScope, aUpperType)(c)
+              }
+            }
+          case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
+        }
       case CanonicalFunType(x, xType, resType, alias) =>
         val newXType = canonicalFuture{
           eliminateScopeUp(scope, killScope, xType)(_) // TODO
@@ -1598,6 +1630,10 @@ object Dol {
                 cont(canonicalError())
             }
           }
+        // TODO light tfun
+        // TODO full tfun
+        // TODO light tapp
+        // TODO full tapp
         case _ =>
           ???
       }
