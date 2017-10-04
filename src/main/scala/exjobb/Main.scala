@@ -236,7 +236,7 @@ object Main {
     }
 
     val pool = new HandlerPool(1) // TODO
-    val tc  = new TypeChecker(su, pool, new AtomicBoolean(false))
+    val tc  = new Typechecker(su, pool, new AtomicBoolean(false))
 
     //val e = idIdExample()
     //val e = numberExample()
@@ -252,10 +252,11 @@ object Main {
     val p = CanonicalQue
     val scope = Map[Symbol, CanonicalType]()
 
-    val eType = tc.run[CanonicalType]{
-      tc.fullInfer(e, p, scope)(_)
+    val res = tc.run[Term]{
+      tc.fullTypecheck(e, p, scope)(_)
     }
-    println(s"$e:          $eType")
+    println("smurf")
+    println(s"$e --->          $res")
 
     //val eType = tc.run{cont =>
     //  tc.fullInfer(e)(cont)

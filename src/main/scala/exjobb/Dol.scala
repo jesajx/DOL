@@ -29,20 +29,23 @@ object Dol {
     // TODO
   }
   sealed trait Expr extends Tree {
-    //val assignedType: Option[CanonicalType]
-    @volatile var assignedType: CanonicalType = null // TODO this it need to be volatile?
-    def withType(typ: CanonicalType): Expr
+    @volatile var assignedType: Option[CanonicalType] = None // TODO does it need to be volatile?
+    def withType(typ: CanonicalType): Expr // TODO as standalone function? that way we don't have to redeclare it in every subclass...
+    def withTypeOption(typeOption: Option[CanonicalType]): Expr
   }
   sealed trait Term  extends Expr {
     def withType(typ: CanonicalType): Term
+    def withTypeOption(typeOption: Option[CanonicalType]): Term
   }
   sealed trait Value extends Term {
     def withType(typ: CanonicalType): Value
+    def withTypeOption(typeOption: Option[CanonicalType]): Value
   }
   sealed trait Type  extends Tree
   sealed trait Decl  extends Type
   sealed trait Def   extends Expr {
     def withType(typ: CanonicalType): Def
+    def withTypeOption(typeOption: Option[CanonicalType]): Def
   }
 
   sealed trait CanonicalType extends Tree
@@ -51,87 +54,96 @@ object Dol {
   case class Var(x: Symbol) extends Term {
     val treeHeight = 1
     val totNumNodes = 1
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
   case class App(x: Symbol, y: Symbol) extends Term {
     val treeHeight = 1
     val totNumNodes = 1
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
-  case class Let(x: Symbol, xTerm: Term, t: Term) extends Term {
-    val treeHeight = 1 + math.max(xTerm.treeHeight, t.treeHeight)
-    val totNumNodes = 1 + xTerm.totNumNodes + t.totNumNodes
-    def withType(typ: CanonicalType) = {
+  case class Let(x: Symbol, xTerm: Term, resTerm: Term) extends Term {
+    val treeHeight = 1 + math.max(xTerm.treeHeight, resTerm.treeHeight)
+    val totNumNodes = 1 + xTerm.totNumNodes + resTerm.totNumNodes
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
   case class Sel(x: Symbol, a: Symbol) extends Term {
     val treeHeight = 1
     val totNumNodes = 1
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
 
   // Value ::=
   case class Obj(x: Symbol, xType: Type, body: Def) extends Value {
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
   case class Fun(x: Symbol, xType: Type, body: Term) extends Value {
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
 
   // Def ::=
   case class FieldDef(a: Symbol, aTerm: Term) extends Def {
     val treeHeight = 1 + aTerm.treeHeight
     val totNumNodes = 1 + aTerm.totNumNodes
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
   case class TypeDef(a: Symbol, aType: Type) extends Def {
     val treeHeight = 1 + aType.treeHeight
     val totNumNodes = 1 + aType.totNumNodes
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
   case class AndDef(left: Def, right: Def)  extends Def {
     val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
     val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
-    def withType(typ: CanonicalType) = {
+    def withTypeOption(typeOption: Option[CanonicalType]) = {
       val res = this.copy()
-      res.assignedType = typ
+      res.assignedType = typeOption
       res
     }
+    def withType(typ: CanonicalType) = withTypeOption(Some(typ))
   }
 
   // Type ::=
@@ -173,13 +185,13 @@ object Dol {
   def max(rest: Int*): Int = rest.toList.max
 
   // TODO what about TypeProj that is not an object?
-  case class CanonicalObjType(x: Symbol, xFields: Map[Symbol, CanonicalType], xTypes: Map[Symbol, (CanonicalType, CanonicalType)], xProjs: Set[TypeProj]) extends CanonicalType { // TODO store scope? // TODO aka "ScaryIntersectionType"
+  case class CanonicalObjType(x: Symbol, xFields: Map[Symbol, CanonicalType], xTypes: Map[Symbol, (CanonicalType, CanonicalType)], xProjs: Set[TypeProj]) extends CanonicalType { // TODO store scope? // TODO aka "ScaryIntersectionType" // TODO rename to "CanonicalObjIntersectionType"?
     val treeHeight = 1 + (xFields.values ++ xTypes.values.flatMap{pairToList}).map{_.treeHeight}.fold(0){math.max}
     val totNumNodes = 1 + (xFields.values ++ xTypes.values.flatMap{pairToList}).map{_.totNumNodes}.sum + xProjs.size
   }
-  case class CanonicalFunType(x: Symbol, xType: CanonicalType, resType: CanonicalType, alias: Set[TypeProj]) extends CanonicalType { // TODO differentiate between projs that have subtypes and projs that don't (opaqueProjs). TODO maybe Map[TypeProj, (Option[CanonicalObjType], Option[CanonicalObjType])]
+  case class CanonicalFunType(x: Symbol, xType: CanonicalType, resType: CanonicalType, projs: Set[TypeProj]) extends CanonicalType { // TODO differentiate between projs that have subtypes and projs that don't (opaqueProjs). TODO maybe Map[TypeProj, (Option[CanonicalObjType], Option[CanonicalObjType])]
     val treeHeight = 1 + max(xType.treeHeight, resType.treeHeight, 2)
-    val totNumNodes = 1 + xType.totNumNodes + resType.totNumNodes + alias.size
+    val totNumNodes = 1 + xType.totNumNodes + resType.totNumNodes + projs.size
   }
   case object CanonicalTop extends CanonicalType {
     val treeHeight = 1
@@ -230,6 +242,154 @@ object Dol {
         t
     }
 
+    def typeRenameVar(fromVar: Symbol, toVar: Symbol, t: Type): Type = t match {
+      case TypeProj(x, a) if x == fromVar =>
+        TypeProj(toVar, a)
+      case FunType(x, xType, resType) if x != fromVar =>
+        FunType(x,
+          typeRenameVar(fromVar, toVar, xType),
+          typeRenameVar(fromVar, toVar, resType))
+      case RecType(x, xType) if x != fromVar =>
+        RecType(x, typeRenameVar(fromVar, toVar, xType))
+      case FieldDecl(a, aType) =>
+        FieldDecl(a, typeRenameVar(fromVar, toVar, aType))
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        TypeDecl(a,
+          typeRenameVar(fromVar, toVar, aLowerType),
+          typeRenameVar(fromVar, toVar, aUpperType))
+      case AndType(left, right) =>
+        AndType(
+          typeRenameVar(fromVar, toVar, left),
+          typeRenameVar(fromVar, toVar, right))
+      case _ =>
+        t
+    }
+
+    def defRenameVar(fromVar: Symbol, toVar: Symbol, d: Def): Def = d match {
+      case FieldDef(a, aTerm) =>
+        FieldDef(a, termRenameVar(fromVar, toVar, aTerm))
+      case TypeDef(a, aType) =>
+        TypeDef(a, NoFuture.typeRenameVar(fromVar, toVar, aType))
+      case AndDef(left, right) =>
+        AndDef(
+          defRenameVar(fromVar, toVar, left),
+          defRenameVar(fromVar, toVar, right))
+      case _ => d
+    }
+
+    def termRenameVar(fromVar: Symbol, toVar: Symbol, e: Term): Term = e match {
+      case Var(x) if x == fromVar => Var(toVar)
+      case App(x, y) if x == fromVar || y == fromVar =>
+        val newX = if (x == fromVar) toVar else x
+        val newY = if (y == fromVar) toVar else y
+        App(newX, newY)
+      case Let(x, xTerm, t) if x != fromVar =>
+        Let(x, termRenameVar(fromVar, toVar, xTerm), termRenameVar(fromVar, toVar, t))
+      case Sel(x, a) if x == fromVar =>
+        Sel(toVar, a)
+      case Obj(x, xType, d) if x != fromVar =>
+        Obj(x,
+          typeRenameVar(fromVar, toVar, xType),
+          defRenameVar(fromVar, toVar, d))
+      case Fun(x, xType, t) if x != fromVar =>
+        Fun(x,
+          typeRenameVar(fromVar, toVar, xType),
+          termRenameVar(fromVar, toVar, t))
+      case _ => e
+    }
+
+    def defAsMap(d: Def): Map[Symbol, Def] = d match {
+      case FieldDef(a, _) => Map(a -> d)
+      case TypeDef(a, _) => Map(a -> d)
+      case AndDef(left, right) => defAsMap(left) ++ defAsMap(right)
+      case _ => Map()
+    }
+
+    def equalDefs(su: SymbolUniverse, first: Def, second: Def): Boolean = {
+      val firstMap = defAsMap(first)
+      val secondMap = defAsMap(second)
+
+      (firstMap.keys == secondMap.keys
+        && mapIntersect(firstMap, secondMap){(left, right) =>
+          (left, right) match {
+            case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(su, aTerm, bTerm)
+            case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypes(su, aType, bType)
+            case _ => false
+          }
+        }.values.forall{(x: Boolean) => x})
+    }
+
+    // TODO
+    def equalTerms(su: SymbolUniverse, first: Term, second: Term): Boolean = {
+      val assignedTypesEqual = (for {
+        firstType <- first.assignedType
+        secondType <- second.assignedType
+      } yield canonicalEqualTypes(su, firstType, secondType)).getOrElse(true)
+
+      assignedTypesEqual && ((first, second) match {
+        case (Var(_), Var(_))       => (first == second)
+        case (App(_, _), App(_, _)) => (first == second)
+        case (Sel(_, _), Sel(_, _)) => (first == second)
+        case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x == y =>
+          (equalTerms(su, xTerm, yTerm)
+            && equalTerms(su, xResTerm, yResTerm))
+        case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x == y =>
+          (equalTypes(su, xType, yType)
+            && equalDefs(su, xBody, yBody))
+        case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x == y =>
+          (equalTypes(su, xType, yType)
+            && equalTerms(su, xBody, yBody))
+        case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x != y =>
+          val z = su.newSymbol()
+          equalTerms(su,
+            NoFuture.termRenameVar(x, z, Let(z, xTerm, xResTerm)),
+            NoFuture.termRenameVar(y, z, Let(z, yTerm, yResTerm)))
+        case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x != y =>
+          val z = su.newSymbol()
+          equalTerms(su,
+            NoFuture.termRenameVar(x, z, Obj(z, xType, xBody)),
+            NoFuture.termRenameVar(y, z, Obj(z, yType, yBody)))
+        case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x != y =>
+          val z = su.newSymbol()
+          equalTerms(su,
+            NoFuture.termRenameVar(x, z, Fun(z, xType, xBody)),
+            NoFuture.termRenameVar(y, z, Fun(z, yType, yBody)))
+        case _ =>
+          false
+      })
+    }
+
+
+
+    def equalTypes(su: SymbolUniverse, first: Type, second: Type): Boolean = (first, second) match {
+      case (Bot, Bot) => true
+      case (Top, Top) => true
+      case (TypeProj(_, _), TypeProj(_, _)) => (first == second)
+      case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
+        val z = su.newSymbol()
+        equalTypes(su,
+          FunType(z, xType, typeRenameVar(x, z, xResType)),
+          FunType(z, yType, typeRenameVar(y, z, yResType)))
+      case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
+        (equalTypes(su, xType, yType)
+          && equalTypes(su, xResType, yResType))
+      case (RecType(x, xType), RecType(y, yType)) if x != y =>
+        val z = su.newSymbol()
+        equalTypes(su,
+          RecType(z, typeRenameVar(x, z, xType)),
+          RecType(z, typeRenameVar(y, z, yType)))
+      case (RecType(x, xType), RecType(y, yType)) if x == y =>
+        equalTypes(su, xType, yType)
+      case (AndType(ll, lr), AndType(rl, rr)) =>
+        equalTypes(su, ll, rl) && equalTypes(su, lr, rr) // TODO order-independence!!!! // TODO or make sure AndType are in a canonical form everywhere?
+      case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
+        equalTypes(su, aType, bType)
+      case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
+        (equalTypes(su, aLowerType, bLowerType)
+          && equalTypes(su, aUpperType, bUpperType))
+      case _ => false
+    }
+
     def canonicalEqualTypes(su: SymbolUniverse, first: CanonicalType, second: CanonicalType): Boolean = (first, second) match {
       case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x != y =>
         val z = su.newSymbol()
@@ -272,8 +432,8 @@ object Dol {
         val projs = xProjs
 
         RecType(x, (fields ++ types ++ projs).reduce(AndType(_, _)))
-      case CanonicalFunType(x, xType, resType, alias) =>
-        alias.fold[Type](FunType(x, NoFuture.decanonicalize(xType), NoFuture.decanonicalize(resType))){AndType(_, _)}
+      case CanonicalFunType(x, xType, resType, projs) =>
+        projs.fold[Type](FunType(x, NoFuture.decanonicalize(xType), NoFuture.decanonicalize(resType))){AndType(_, _)}
       case CanonicalTop => Top
       case CanonicalBot => Bot
       case CanonicalQue => Que
@@ -528,18 +688,21 @@ object Dol {
     case FieldDef(a, aTerm)  => 1
     case TypeDef(a, aType)   => 1
     case AndDef(left, right) => defSize(left) + defSize(right)
+    case _ => ???
   }
 
   def defKeysAsSet(d: Def): Set[Symbol] = d match {
     case FieldDef(a, aTerm)  => Set(a)
     case TypeDef(a, aType)   => Set(a)
     case AndDef(left, right) => defKeysAsSet(left) ++ defKeysAsSet(right)
+    case _ => ???
   }
 
   def defTermAsMap(d: Def): Map[Symbol, Def] = d match {
     case FieldDef(a, _) => Map(a -> d)
     case TypeDef(a, _)  => Map(a -> d)
     case AndDef(left, right) => defTermAsMap(left) ++ defTermAsMap(right)
+    case _ => ???
   }
 
   def defHasDuplicates(d: Def): Boolean = {
@@ -595,7 +758,7 @@ object Dol {
     def empty = true
   }
 
-  class TypeChecker(val symbolUniverse: SymbolUniverse, val pool: HandlerPool, val hasErrorsAtom:  AtomicBoolean) {
+  class Typechecker(val symbolUniverse: SymbolUniverse, val pool: HandlerPool, val hasErrorsAtom:  AtomicBoolean) {
     // TODO smarter futureType that does not always fork? e.g. r(..., asFutureTypePlease=true) and chooses to make a future or not
 
     def launch(f: => Unit) {
@@ -666,7 +829,7 @@ object Dol {
             }
           }
         }
-      case proj @ TypeProj(x, a) =>
+      case proj @ TypeProj(x, a) if scope.contains(x) =>
         // TODO expand to glb(x.a, upper(x.a)) here?
         cont(CanonicalObjType(z, Map(), Map(), Set(proj)))
       case decl @ FieldDecl(a, aType) =>
@@ -692,7 +855,7 @@ object Dol {
       case Top => cont(CanonicalTop)
       case Bot => cont(CanonicalBot)
       case Que => cont(CanonicalQue)
-      case ErrorType => cont(canonicalError())
+      case _ => cont(canonicalError())
     }
 
     def canonicalFuture(f: ((CanonicalType) => Unit) => Unit) = CanonicalFuture(contFuture(f))
@@ -769,11 +932,11 @@ object Dol {
 
 
     def canonicalRaise(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: (CanonicalType) => Unit): Unit = {
-      //expandCanonicalFutureTypes(t){t =>
-      //  expandCanonicalFutureTypes(p){p =>
+      //expandCanonicalTypeFutures(t){t =>
+      //  expandCanonicalTypeFutures(p){p =>
       //    //println(s"canonicalRaise($scope, $t, $p)")
           canonicalRaise2(scope, t, p) { res =>
-      //      expandCanonicalFutureTypes(res){res =>
+      //      expandCanonicalTypeFutures(res){res =>
       //        println(s"canonicalRaise($scope, $t, $p) = $res")
               cont(res)
             }
@@ -975,19 +1138,19 @@ object Dol {
         cont(canonicalError())
     }
 
-    def expandCanonicalFutureTypes(t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
+    def expandCanonicalTypeFutures(t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
       case CanonicalObjType(z, fields, types, projs) =>
         val fieldConts = fields.map{case (a, aType) =>
           {(c: (Map[Symbol, CanonicalType]) => Unit) =>
-            expandCanonicalFutureTypes(aType){res =>
+            expandCanonicalTypeFutures(aType){res =>
               c(Map(a -> res))
             }
           }
         }.toList
         val typeConts = types.map{case (a, (aLowerType, aUpperType)) =>
           {(c: (Map[Symbol, (CanonicalType, CanonicalType)]) => Unit) =>
-            expandCanonicalFutureTypes(aLowerType) {aLowerType =>
-              expandCanonicalFutureTypes(aUpperType) {aUpperType =>
+            expandCanonicalTypeFutures(aLowerType) {aLowerType =>
+              expandCanonicalTypeFutures(aUpperType) {aUpperType =>
                 c(Map(a -> (aLowerType, aUpperType)))
               }
             }
@@ -999,14 +1162,14 @@ object Dol {
           }
         }
       case CanonicalFunType(x, xType, resType, projs) =>
-        expandCanonicalFutureTypes(xType) {xType =>
-          expandCanonicalFutureTypes(resType) {resType =>
+        expandCanonicalTypeFutures(xType) {xType =>
+          expandCanonicalTypeFutures(resType) {resType =>
             cont(CanonicalFunType(x, xType, resType, projs))
           }
         }
       case CanonicalFuture(cell) =>
         onComplete(cell){
-          expandCanonicalFutureTypes(_)(cont)
+          expandCanonicalTypeFutures(_)(cont)
         }
       case _ =>
         cont(t)
@@ -1020,17 +1183,77 @@ object Dol {
       case _ => cont(t)
     }
 
-
-    def canonicalScope(scope: Scope)(cont: (CanonicalScope) => Unit): Unit = {
-      val typesAndCompleters = scope.map{case (x, t) =>
-        (x, t, newCellCompleter(pool, Lattice.trivial[CanonicalType]))
-      }
-      val canonicalScope = typesAndCompleters.map{case (x, _, c) => (x, CanonicalFuture(c.cell))}.toMap
-      typesAndCompleters.foreach{case (x, t, c) =>
-        canonicalType(canonicalScope, x, t, Set()) {
-          c.putFinal(_)
+    def expandTermFutures(term: Term)(cont: (Term) => Unit): Unit = term match {
+      case TermFuture(cell) =>
+        onComplete(cell){
+          expandTermFutures(_)(cont)
         }
-      }
+      case _ =>
+        def expandAssignedType(t: Term)(c: (Term) => Unit): Unit = {
+          t.assignedType match {
+            case Some(termType) =>
+              expandCanonicalTypeFutures(termType){termType =>
+                c(t.withType(termType))
+              }
+            case None =>
+              c(t)
+          }
+        }
+
+        term match {
+          case Let(x, xTerm, resTerm) =>
+            expandTermFutures(xTerm){xTerm =>
+              expandTermFutures(resTerm){resTerm =>
+                expandAssignedType(Let(x, xTerm, resTerm).withTypeOption(term.assignedType))(cont)
+              }
+            }
+          case Obj(x, xType, body) =>
+            expandFutureTypes(xType){xType =>
+              expandDefFutures(body){body =>
+                expandAssignedType(Obj(x, xType, body).withTypeOption(term.assignedType))(cont)
+              }
+            }
+          case Fun(x, xType, body) =>
+            expandFutureTypes(xType){xType =>
+              expandTermFutures(body){body =>
+                expandAssignedType(Fun(x, xType, body).withTypeOption(term.assignedType))(cont)
+              }
+            }
+          case _ => // Var, App, Sel
+            expandAssignedType(term)(cont)
+        }
+    }
+
+    def expandDefFutures(d: Def)(cont: (Def) => Unit): Unit = d match {
+      case DefFuture(cell) =>
+        onComplete(cell){
+          expandDefFutures(_)(cont)
+        }
+      case _ =>
+        def expandAssignedType(d2: Def)(c: (Def) => Unit): Unit = {
+          d2.assignedType match {
+            case Some(termType) =>
+              expandCanonicalTypeFutures(termType){termType =>
+                c(d2.withType(termType))
+              }
+            case None =>
+              c(d2)
+          }
+        }
+        d match {
+          case FieldDef(a, aTerm) =>
+            expandTermFutures(aTerm){aTerm =>
+              expandAssignedType(FieldDef(a, aTerm).withTypeOption(d.assignedType))(cont)
+            }
+          case AndDef(left, right) =>
+            expandDefFutures(left){left =>
+              expandDefFutures(right){right =>
+                expandAssignedType(AndDef(left, right).withTypeOption(d.assignedType))(cont)
+              }
+            }
+          case _ => // TypeDecl
+            expandAssignedType(d)(cont)
+        }
     }
 
 
@@ -1271,21 +1494,21 @@ object Dol {
         val z = symbolUniverse.newSymbol()
         alphaRename(xTerm){xTerm =>
           alphaRename(t){t =>
-            cont.asInstanceOf[(Term) => Unit](renameToUniqueVarInExpr(x, z, Let(z, xTerm, t)))
+            cont.asInstanceOf[(Term) => Unit](exprRenameVar(x, z, Let(z, xTerm, t)))
           }
         }
       case Obj(x, xType, d) =>
         alphaRename(xType){xType =>
           alphaRename(d){d =>
             val z = symbolUniverse.newSymbol()
-            cont.asInstanceOf[(Value) => Unit](renameToUniqueVarInExpr(x, z, Obj(z, xType, d)))
+            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Obj(z, xType, d)))
           }
         }
       case Fun(x, xType, body) =>
         alphaRename(xType){xType =>
           alphaRename(body){body =>
             val z = symbolUniverse.newSymbol()
-            cont.asInstanceOf[(Value) => Unit](renameToUniqueVarInExpr(x, z, Fun(z, xType, body)))
+            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Fun(z, xType, body)))
           }
         }
       case FieldDef(a, aTerm) =>
@@ -1351,28 +1574,28 @@ object Dol {
         cont(t)
     }
 
-    def renameToUniqueVarInExpr[T <: Expr](fromVar: Symbol, toVar: Symbol, e: T): T = e match {
+    def exprRenameVar[T <: Expr](fromVar: Symbol, toVar: Symbol, e: T): T = e match { // TODO do in parallel and use TermFuture
       case Var(x) if x == fromVar => Var(toVar).asInstanceOf[T]
       case App(x, y) if x == fromVar || y == fromVar =>
         val newX = if (x == fromVar) toVar else x
         val newY = if (y == fromVar) toVar else y
         App(newX, newY).asInstanceOf[T]
       case Let(x, xTerm, t) if x != fromVar =>
-        Let(x, renameToUniqueVarInExpr(fromVar, toVar, xTerm), renameToUniqueVarInExpr(fromVar, toVar, t)).asInstanceOf[T]
+        Let(x, exprRenameVar(fromVar, toVar, xTerm), exprRenameVar(fromVar, toVar, t)).asInstanceOf[T]
       case Sel(x, a) if x == fromVar =>
         Sel(toVar, a).asInstanceOf[T]
       case Obj(x, xType, d) if x != fromVar =>
         val newXType = futureType{
           renameToUniqueVar(fromVar, toVar, xType)(_)
         }
-        Obj(x, newXType, renameToUniqueVarInExpr(fromVar, toVar, d)).asInstanceOf[T]
+        Obj(x, newXType, exprRenameVar(fromVar, toVar, d)).asInstanceOf[T]
       case Fun(x, xType, t) if x != fromVar =>
         val newXType = futureType{
           renameToUniqueVar(fromVar, toVar, xType)(_)
         }
-        Fun(x, newXType, renameToUniqueVarInExpr(fromVar, toVar, t)).asInstanceOf[T]
+        Fun(x, newXType, exprRenameVar(fromVar, toVar, t)).asInstanceOf[T]
       case FieldDef(a, aTerm) =>
-        FieldDef(a, renameToUniqueVarInExpr(fromVar, toVar, aTerm)).asInstanceOf[T]
+        FieldDef(a, exprRenameVar(fromVar, toVar, aTerm)).asInstanceOf[T]
       case TypeDef(a, aType) =>
         val newAType = futureType{
           renameToUniqueVar(fromVar, toVar, aType)(_)
@@ -1380,8 +1603,8 @@ object Dol {
         TypeDef(a, newAType).asInstanceOf[T]
       case AndDef(left, right) =>
         AndDef(
-          renameToUniqueVarInExpr(fromVar, toVar, left),
-          renameToUniqueVarInExpr(fromVar, toVar, right)).asInstanceOf[T]
+          exprRenameVar(fromVar, toVar, left),
+          exprRenameVar(fromVar, toVar, right)).asInstanceOf[T]
       case _ => e
     }
 
@@ -1415,7 +1638,7 @@ object Dol {
           case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
         }
         cont(CanonicalObjType(x, fields, types, Set())) // TODO canonicalLeastCommonSupertype(..., projs)
-      case CanonicalFunType(x, xType, resType, alias) =>
+      case CanonicalFunType(x, xType, resType, projs) =>
         val newXType = canonicalFuture{
           eliminateScopeDown(scope, killScope, xType)(_) // TODO
         }
@@ -1424,10 +1647,10 @@ object Dol {
           eliminateScopeUp(localScope, killScope, resType)(_) // TODO
         }
 
-        val newAlias = alias // TODO
+        val newProjs = projs // TODO
 
-        // TODO lub with eliminatedUp(alias)
-        cont(CanonicalFunType(x, newXType, newResType, newAlias))
+        // TODO lub with eliminatedUp(projs)
+        cont(CanonicalFunType(x, newXType, newResType, newProjs))
       case CanonicalFuture(cell) =>
         onComplete(cell){
           eliminateScopeUp(scope, killScope, _)(cont)
@@ -1462,7 +1685,7 @@ object Dol {
             }
           case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
         }
-      case CanonicalFunType(x, xType, resType, alias) =>
+      case CanonicalFunType(x, xType, resType, projs) =>
         val newXType = canonicalFuture{
           eliminateScopeUp(scope, killScope, xType)(_) // TODO
         }
@@ -1471,10 +1694,10 @@ object Dol {
           eliminateScopeDown(localScope, killScope, resType)(_) // TODO
         }
 
-        val newAlias = alias // TODO
+        val newProjs = projs // TODO
 
-        // TODO glb with eliminatedDown(alias)
-        cont(CanonicalFunType(x, newXType, newResType, newAlias))
+        // TODO glb with eliminatedDown(projs)
+        cont(CanonicalFunType(x, newXType, newResType, newProjs))
       case CanonicalFuture(cell) =>
         onComplete(cell){
           eliminateScopeDown(scope, killScope, _)(cont)
@@ -1487,6 +1710,41 @@ object Dol {
       val lattice = Lattice.trivial[T]
       contCell(lattice)(f)
     }
+
+    case class TermFuture(cell: Meh[Term]) extends Term { // NOTE: Nested, so that Typechecker.pool is in scope. Don't mix with other Typechecker instances!
+      val treeHeight = 1
+      val totNumNodes = 1
+      assignedType = Some(canonicalFuture{cont =>
+        onComplete(cell){actualTerm =>
+          cont(actualTerm.assignedType.getOrElse(canonicalError()))
+        }
+      })
+      def withTypeOption(typeOption: Option[CanonicalType]) = {
+        val res = this.copy()
+        res.assignedType = typeOption
+        res
+      }
+      def withType(typ: CanonicalType) = withTypeOption(Some(typ))
+    }
+
+    case class DefFuture(cell: Meh[Def]) extends Def { // NOTE: Nested, so that Typechecker.pool is in scope. Don't mix with other Typechecker instances!
+      val treeHeight = 1
+      val totNumNodes = 1
+      assignedType = Some(canonicalFuture{cont =>
+        onComplete(cell){actualDef =>
+          cont(actualDef.assignedType.getOrElse(canonicalError()))
+        }
+      })
+      def withTypeOption(typeOption: Option[CanonicalType]) = {
+        val res = this.copy()
+        res.assignedType = typeOption
+        res
+      }
+      def withType(typ: CanonicalType) = withTypeOption(Some(typ))
+    }
+
+    def termFuture(f: ((Term) => Unit) => Unit) = this.TermFuture(contFuture(f))
+    def defFuture(f: ((Def) => Unit) => Unit) = this.DefFuture(contFuture(f))
 
     def error(): Type = {
       hasErrorsAtom.lazySet(true)
@@ -1511,123 +1769,168 @@ object Dol {
     //   f({A = Int}): Int  // i.e. not x.A
     // TODO circular dependencies between fields should always result in ErrorType?
 
-    def r(e: Term, p: CanonicalPrototype = CanonicalQue, scope: CanonicalScope = Map())(cont: (CanonicalType) => Unit): Unit = { // TODO return terms with assigned type
+    def typecheckTerm(e: Term, p: CanonicalPrototype = CanonicalQue, scope: CanonicalScope = Map()): Term = { // TODO term-continuations?
       (e,p) match {
         case (_, CanonicalFuture(cell)) =>
-          onComplete(cell) {
-            r(e, _, scope)(cont)
-          }
+          e.withType(
+            canonicalFuture{cont =>
+              onComplete(cell) {actualP =>
+                val typedTerm = typecheckTerm(e, actualP, scope)
+                cont(typedTerm.assignedType.getOrElse(canonicalError()))
+              }
+            }
+          )
         case (Var(x), p) =>
-          scope.get(x) match {
-            case Some(xType) =>
-              canonicalRaise(scope, xType, p)(cont)
-            case None => e.withType(canonicalError())
+          e.withType(
+            scope.get(x) match {
+              case Some(xType) =>
+                canonicalFuture{
+                  canonicalRaise(scope, xType, p)(_)
+                }
+              case None => canonicalError()
+            }
+          )
+        case (Let(x, xTerm, resTerm), p) =>
+          val typedXTerm = termFuture{cont =>
+            cont(typecheckTerm(xTerm, CanonicalQue, scope))
           }
-        case (Let(x, xTerm, t), p) =>
-          val xType = CanonicalFuture(contFuture[CanonicalType] {
-            r(xTerm, CanonicalQue, scope)(_) // pass down "x"?
-          })
-          val z = symbolUniverse.newSymbol()
-          val renamedT = renameToUniqueVarInExpr(x, z, t)
-          val localScope = scope + (z -> xType)
-          r(renamedT, p, localScope) {tType =>
-            canonicalRaise(localScope, tType, p){
-              eliminateScopeUp(localScope, Map(z -> xType), _)(cont)
+          val xType = typedXTerm.assignedType.getOrElse(canonicalError())
+          if (scope.contains(x)) { // assume alpha-renamed.
+            ???
+            canonicalError()
+          }
+          val localScope = scope + (x -> xType)
+
+          val typedResTerm = termFuture{cont =>
+            cont(typecheckTerm(resTerm, p, localScope))
+          }
+          Let(x, typedXTerm, typedResTerm).withType{
+            canonicalFuture{cont =>
+              eliminateScopeUp(localScope, Map(x -> xType), typedResTerm.assignedType.getOrElse(canonicalError()))(cont)
             }
           }
         case (Sel(x, a), p) =>
-          r(Var(x), CanonicalObjType(x, Map(a -> p), Map(), Set()), scope) {
-            expandCanonicalFutureOnce(_) {
-              case CanonicalObjType(y, fields, EmptyMap(), EmptySet()) if x == y && fields.contains(a) => // TODO can x != y? ensure that by canonicalRaise?
-                cont(fields(a))
-              case _ => cont(canonicalError())
-            }
-          }
-        case (Obj(x, xType, d), p) =>
-          val z = symbolUniverse.newSymbol()
-          if (defHasDuplicates(d)) {
-            cont(canonicalError())
-          } else {
-            alphaRename(xType) {xType =>
-              alphaRename(d) {dType =>
-                renameToUniqueVar(x, z, xType){zType =>
-                  val zCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
-                  val zCanonicalType = CanonicalFuture(zCompleter.cell)
-                  launch {
-                    canonicalType(scope + (z -> zCanonicalType), z, zType, Set()) {res =>
-                      zCompleter.putFinal(res)
-                    }
-                  }
-                  val localScope = scope + (z -> zCanonicalType)
-                  expandCanonicalFutureOnce(zCanonicalType) {
-                    case CanonicalTop =>
-                      ???
-                    case tmp @ CanonicalObjType(k, fields, types, alias) if k == z =>
-                      def k(member: Def)(c: (CanonicalType) => Unit): Unit = member match {
-                        case FieldDef(a, aTerm) =>
-                          expandCanonicalFutureOnce(fields.getOrElse(a, CanonicalQue)) {aPrototype =>
-                            r(aTerm, aPrototype, localScope) {aType =>
-                              c(CanonicalObjType(z, Map(a -> aType), Map(), Set()))
-                            }
-                          }
-                        case TypeDef(a, aType) =>
-                          val aPrototype = CanonicalObjType(z, Map(), Map(a -> types.getOrElse(a, (CanonicalQue, CanonicalQue))), Set())
-                          val aCanonicalType = canonicalize(localScope, aType)
-                          canonicalRaise(localScope, CanonicalObjType(z, Map(), Map(a -> (aCanonicalType, aCanonicalType)), Set()), aPrototype)(c)
-                        case AndDef(left, right) =>
-                          val leftType = CanonicalFuture(contFuture[CanonicalType] {
-                            k(left)(_)
-                          })
-                          val rightType = CanonicalFuture(contFuture[CanonicalType] {
-                            k(right)(_)
-                          })
-                          canonicalGreatestCommonSubtype(scope, leftType, rightType)(c)
-                      }
-                      // TODO need to check that type-projections are fulfilled!!!
+          val xType = typecheckTerm(Var(x), CanonicalObjType(x, Map(a -> p), Map(), Set()), scope).assignedType.getOrElse(canonicalError())
 
-                      val dType = CanonicalFuture(contFuture[CanonicalType] {
-                        k(d)(_)
-                      }) // TODO e.type = dType
-                      canonicalRaise(scope, zCanonicalType, p)(cont)
-                  }
-                }
+          e.withType{
+            canonicalFuture{cont =>
+              expandCanonicalFutureOnce(xType) {
+                case CanonicalObjType(y, fields, EmptyMap(), EmptySet()) if x != y && fields.contains(a) => // TODO can x != y? ensure that by canonicalRaise? TODO if aType references y and y is in scope, then it is fine. But if y is not in scope we need to eliminate y. it is probably better that canonicalRaise does this.
+                  val aType = fields(a)
+                  canonicalRenameToUniqueVar(y, x, aType)(cont)
+                case CanonicalObjType(y, fields, EmptyMap(), EmptySet()) if x == y && fields.contains(a) =>
+                  val aType = fields(a)
+                  cont(aType)
+                case _ => cont(canonicalError())
               }
             }
           }
-        case (Fun(x, _, _), CanonicalQue) =>
-          r(e, CanonicalFunType(x, CanonicalQue, CanonicalQue, Set()), scope)(cont)
-        case (Fun(x, xType, res), CanonicalFunType(y, yPrototype, yResPrototype, projs)) =>
-          val z = symbolUniverse.newSymbol()
-          val argType = canonicalize(scope, xType) // TODO assert x not free in xType? maybe sufficient to simply not add x to scope? what if some other x is in scope?
-          val renamedRes = renameToUniqueVarInExpr(x, z, res) // TODO maybe handle all renaming before typechecking?
+        case (Obj(x, xType, objBody), p) =>
+          val xCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
+          val xCanonicalType = CanonicalFuture(xCompleter.cell)
 
-          val resType = CanonicalFuture(contFuture{c =>
-            canonicalRenameToUniqueVar(y, z, yResPrototype){zResPrototype =>
-              r(renamedRes, zResPrototype, scope + (z -> argType))(c)
-            }
-          })
-          // TODO projs. needs renaming.
-          canonicalRaise(scope, CanonicalFunType(z, argType, resType, Set()), p)(cont)
-        case (Fun(x, xType, res), CanonicalTop) =>
-          val funType = CanonicalFuture(contFuture{
-            r(e, CanonicalFunType(x, CanonicalQue, CanonicalTop, Set()), scope)(_)
-          }) // TODO e.type = ...
-          cont(CanonicalTop)
-        case (App(x, y), p) =>
-          r(Var(x), CanonicalQue, scope) {
-            expandCanonicalFutureOnce(_) {
-              case CanonicalFunType(z, zType, resType, projs) =>
-                r(Var(y), zType, scope) {yType =>
-                  canonicalRenameToUniqueVar(z, y, resType){appResType =>
-                    canonicalRaise(scope, appResType, p)(cont)
+          canonicalType(scope + (x -> xCanonicalType), x, xType, Set()) {res =>
+            xCompleter.putFinal(res)
+          }
+
+          val localScope = scope + (x -> xCanonicalType)
+
+          if (defHasDuplicates(objBody)) {
+            e.withType(canonicalError())
+          } else {
+            def typecheckDef(fields: Map[Symbol, CanonicalPrototype], types: Map[Symbol, (CanonicalPrototype, CanonicalPrototype)], member: Def): Def = member match {
+              case FieldDef(a, aTerm) =>
+                val aPrototype = fields.getOrElse(a, CanonicalQue) // TODO make sure we count projs.
+                val typedATerm = typecheckTerm(aTerm, aPrototype, localScope)
+                FieldDef(a, typedATerm) // TODO Invent non-recursive CanonicalObjType?
+              case TypeDef(a, aType) =>
+                val (aLowerPrototype, aUpperPrototype) = types.getOrElse(a, (CanonicalQue, CanonicalQue))
+                val aCanonicalType = canonicalize(localScope, aType)
+                val aLowerType = canonicalFuture{
+                  canonicalLower(localScope, aCanonicalType, aLowerPrototype)(_)
+                }
+                val aUpperType = canonicalFuture{
+                  canonicalRaise(localScope, aCanonicalType, aUpperPrototype)(_)
+                }
+                member // TODO replace with canonicaltype?
+              case AndDef(left, right) =>
+                AndDef(
+                  defFuture{
+                    _(typecheckDef(fields, types, left))
+                  },
+                  defFuture{
+                    _(typecheckDef(fields, types, right))
+                  }
+                )
+              case this.DefFuture(cell) =>
+                defFuture{c =>
+                  onComplete(cell) {actualMember =>
+                    c(typecheckDef(fields, types, actualMember))
                   }
                 }
-              case CanonicalBot =>
-                r(Var(y), CanonicalTop, scope) {yType =>
-                  canonicalRaise(scope, CanonicalBot, p)(cont)
-                }
-              case _ =>
-                cont(canonicalError())
+              case _ => ???
+            }
+
+            val objType = canonicalFuture{
+              canonicalRaise(scope, xCanonicalType, p)(_)
+            }
+
+            val typedObjBody = defFuture{cont =>
+              expandCanonicalFutureOnce(xCanonicalType) {
+                case CanonicalTop =>
+                  cont(typecheckDef(Map(), Map(), objBody))
+                case tmp @ CanonicalObjType(k, fields, types, projs) if k == x =>
+                  // TODO grab fields and types from projs
+                  cont(typecheckDef(fields, types, objBody))
+                case _ =>
+                  cont(objBody.withType(canonicalError()))
+              }
+            }
+            Obj(x, xType, typedObjBody).withType(objType)
+          }
+        case (Fun(x, _, _), CanonicalQue) =>
+          typecheckTerm(e, CanonicalFunType(x, CanonicalQue, CanonicalQue, Set()), scope)
+        case (Fun(x, xType, body), CanonicalFunType(y, yPrototype, resPrototype, projs)) if x != y =>
+          val z = symbolUniverse.newSymbol()
+          val renamedBody = exprRenameVar(x, z, body)
+          val renamedYResPrototype = canonicalFuture{canonicalRenameToUniqueVar(y, z, resPrototype)(_)}
+          typecheckTerm(Fun(z, xType, renamedBody), CanonicalFunType(y, yPrototype, renamedYResPrototype, projs), scope)
+        case (Fun(x, xType, body), CanonicalFunType(y, argPrototype, resPrototype, projs)) if x == y =>
+          val argType = canonicalize(scope, xType)
+          val typedBody = termFuture{cont =>
+            cont(typecheckTerm(body, resPrototype, scope + (x -> argType)))
+          }
+
+          val loweredArgType = canonicalFuture{
+            canonicalLower(scope, argType, argPrototype)(_)
+          }
+          // TODO do something with projs?
+          Fun(x, xType, typedBody).withType{
+            CanonicalFunType(x, loweredArgType, typedBody.assignedType.getOrElse(canonicalError()), projs)
+          }
+        case (Fun(x, xType, body), CanonicalTop) =>
+          val argType = canonicalize(scope, xType)
+          val typedBody = termFuture{cont =>
+            cont(typecheckTerm(body, CanonicalTop, scope + (x -> argType)))
+          }
+          Fun(x, xType, typedBody).withType(CanonicalTop)
+        case (App(x, y), p) =>
+          val z = symbolUniverse.newSymbol()
+          val xPrototype = CanonicalFunType(z, CanonicalQue, p, Set())
+
+          val xType = typecheckTerm(Var(x), xPrototype, scope).assignedType.getOrElse(canonicalError())
+
+          e.withType{
+            canonicalFuture{cont =>
+              expandCanonicalFutureOnce(xType) {
+                case CanonicalFunType(z, zType, resType, projs) =>
+                  launch {
+                    typecheckTerm(Var(y), zType, scope) // only check for errors.
+                  }
+                  cont(resType)
+                case _ =>
+                  cont(canonicalError())
+              }
             }
           }
         // TODO light tfun
@@ -1635,6 +1938,7 @@ object Dol {
         // TODO light tapp
         // TODO full tapp
         case _ =>
+          canonicalError()
           ???
       }
     }
@@ -1656,25 +1960,34 @@ object Dol {
           await(rootPromise.future)
         }
       } catch {
-        case e: TimeoutException => None
+        case e: TimeoutException => e.printStackTrace(); None
+        case e: NotImplementedError => e.printStackTrace(); None
       }
     }
 
-    def fullInfer(rootExpr: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map())(cont: (CanonicalType) => Unit): Unit = {
-      alphaRename(rootExpr){rootExpr =>
-        r(rootExpr, rootPrototype, rootScope) {rootType =>
-          expandCanonicalFutureTypes(rootType) {res =>
-            cont(res)
-          }
+    def fullTypecheck(term: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map())(cont: (Term) => Unit): Unit = {
+      alphaRename(term){term =>
+        val lazyTypedTerm = typecheckTerm(term, rootPrototype, rootScope)
+        expandTermFutures(lazyTypedTerm) { typedTerm =>
+          cont(typedTerm)
         }
       }
     }
-  } // end class TypeChecker
 
-  def pinfer(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map()): Option[CanonicalType] = {
+  } // end class Typechecker
+
+  def typecheckInParallel(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map()): Option[Term] = {
     val pool         = new HandlerPool(1) // TODO
-    val typeChecker  = new TypeChecker(symbolUniverse, pool, new AtomicBoolean(false))
-    val res = typeChecker.run[CanonicalType]{typeChecker.fullInfer(rootExpr, rootPrototype, rootScope)(_)}
-    res
+    val typeChecker  = new Typechecker(symbolUniverse, pool, new AtomicBoolean(false))
+    typeChecker.run[Term]{
+      typeChecker.fullTypecheck(rootExpr, rootPrototype, rootScope)(_)
+    }
   }
+
+  //def pinfer(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map()): Option[CanonicalType] = {
+  //  val pool         = new HandlerPool(1) // TODO
+  //  val typeChecker  = new Typechecker(symbolUniverse, pool, new AtomicBoolean(false))
+  //  val res = typeChecker.run[CanonicalType]{typeChecker.fullInfer(rootExpr, rootPrototype, rootScope)(_)}
+  //  res
+  //}
 }

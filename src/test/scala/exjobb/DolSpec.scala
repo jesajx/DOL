@@ -219,20 +219,20 @@ object DolSpec extends Properties("DolSpec") {
 
 
 
-  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, typ: CanonicalType)
+  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term)
 
   def genVarInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = {
     val justMakeSomethingUp = for {
       x <- const(su.newSymbol())
-      t <- genCanonicalType(su, Map())
-    } yield InferenceProblem(Var(x), CanonicalQue, scope + (x -> t), t)
+      xType <- genCanonicalType(su, Map())
+    } yield InferenceProblem(Var(x), CanonicalQue, scope + (x -> xType), Var(x).withType(xType))
     if (scope.isEmpty) {
       justMakeSomethingUp
     } else {
       val pickSomethingFromScope = for {
         x <- oneOf(scope.keys.toSeq)
-        t <- scope(x)
-      } yield InferenceProblem(Var(x), CanonicalQue, scope, t)
+        xType <- scope(x)
+      } yield InferenceProblem(Var(x), CanonicalQue, scope, Var(x).withType(xType))
       oneOf(justMakeSomethingUp, pickSomethingFromScope)
     }
   }
@@ -243,18 +243,18 @@ object DolSpec extends Properties("DolSpec") {
       case _ => List()
     }.toSeq
     if (possibilities.isEmpty)
-      Gen.fail
+      Gen.fail // TODO make something upp like genVarInferenceProblem() does.
     else for {
-      someField <- oneOf(possibilities)
+      (x, a, aType) <- oneOf(possibilities)
       if (possibilities.size != 0)
-    } yield InferenceProblem(Sel(someField._1, someField._2), CanonicalQue, scope, someField._3)
+    } yield InferenceProblem(Sel(x, a), CanonicalQue, scope, Sel(x, a).withType(aType))
   }
 
   def genLetInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
     x <- const(su.newSymbol)
     p1 <- genInferenceProblem(su, scope)
-    p2 <- genInferenceProblem(su, scope + (x -> p1.typ))
-  } yield InferenceProblem(Let(x, p1.term, p2.term), p2.prototype, p1.scope ++ p2.scope, p2.typ)
+    p2 <- genInferenceProblem(su, scope + (x -> p1.expected.assignedType.get))
+  } yield InferenceProblem(Let(x, p1.term, p2.term), p2.prototype, p1.scope ++ p2.scope, Let(x, p1.expected, p2.expected).withType(p2.expected.assignedType.get))
 
   // TODO def genObjInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] // TODO generate fun then def, or vice versa?
   // TODO def genAppInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] // TODO search for funs in scope and generate term from argtype // TODO gen arg, gen super of arg.type, gen function taking super giving {gen term with type}
@@ -268,23 +268,44 @@ object DolSpec extends Properties("DolSpec") {
     x <- const(su.newSymbol())
     y <- const(su.newSymbol())
     arg <- genInferenceProblem(su, scope)
-    argSuper <- genCanonicalSupertype(su, scope, arg.typ)
+    argSuper <- genCanonicalSupertype(su, scope, arg.expected.assignedType.get)
     res <- genInferenceProblem(su, scope + (x -> argSuper))
-  } yield InferenceProblem(Let(f, Fun(x, NoFuture.decanonicalize(argSuper), res.term), Let(y, arg.term, App(f, y))), res.prototype, arg.scope ++ res.scope - x, res.typ)
+    resType <- const(res.expected.assignedType.get)
+  } yield InferenceProblem(
+    Let(f, Fun(x, NoFuture.decanonicalize(argSuper), res.term), Let(y, arg.term, App(f, y))),
+    res.prototype,
+    arg.scope ++ res.scope - x,
+    Let(f,
+      Fun(x, NoFuture.decanonicalize(argSuper), res.expected).withType(CanonicalFunType(x, argSuper, resType, Set())),
+      Let(y, arg.expected, App(f, y).withType(resType))
+      ).withType(resType))
 
   def genFunInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
     x <- const(su.newSymbol)
     xCanonicalType <- genCanonicalType(su, scope) // TODO decanonicalize?
     body <- genInferenceProblem(su, scope + (x -> xCanonicalType))
     prototype <- const(if (body.prototype == CanonicalQue) CanonicalQue else CanonicalFunType(x, CanonicalQue, body.prototype, Set()))
-  } yield InferenceProblem(Fun(x, NoFuture.decanonicalize(xCanonicalType), body.term), prototype, body.scope, CanonicalFunType(x, xCanonicalType, body.typ, Set()))
+  } yield InferenceProblem(
+    Fun(x, NoFuture.decanonicalize(xCanonicalType), body.term),
+    prototype,
+    body.scope,
+    Fun(x, NoFuture.decanonicalize(xCanonicalType), body.expected).
+      withType(CanonicalFunType(x, xCanonicalType, body.expected.assignedType.get, Set())))
 
   def genFixedPointInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for { // TODO use LightweightApp instead.
     f <- const(su.newSymbol)
     x <- const(su.newSymbol)
     y <- const(su.newSymbol)
     p <- genInferenceProblem(su, scope)
-  } yield InferenceProblem(Let(f, Fun(x, NoFuture.decanonicalize(p.typ), Var(x)), Let(y, p.term,  App(f, y))), CanonicalQue, p.scope, p.typ)
+    u <- println(s"$p")
+    typ <- const(p.expected.assignedType.get)
+  } yield InferenceProblem(
+    Let(f, Fun(x, NoFuture.decanonicalize(typ), Var(x)), Let(y, p.term, App(f, y))),
+    CanonicalQue,
+    p.scope,
+    Let(f,
+      Fun(x, NoFuture.decanonicalize(typ), Var(x).withType(typ)).withType(CanonicalFunType(x, typ, typ, Set())),
+      Let(y, p.expected, App(f, y).withType(typ)).withType(typ)).withType(typ))
 
   def genInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = oneOf(
     genVarInferenceProblem(su, scope),
@@ -310,9 +331,10 @@ object DolSpec extends Properties("DolSpec") {
   property("positiveParallelInferenceProblem") = {
     val su = new SymbolUniverse()
     Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem)) { (problem: InferenceProblem) =>
-      val res = pinfer(su, problem.term, problem.prototype, problem.scope)
+      // TODO check type of all terms, not just top.
+      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
       ("res = " + res + "") |: Prop.all(
-        res != None && NoFuture.canonicalEqualTypes(su, res.get, problem.typ)) // TODO comparison that does not depend on var names.
+        res != None && NoFuture.equalTerms(su, res.get, problem.expected)) // TODO comparison that does not depend on var names.
     }
   }
 
@@ -321,9 +343,22 @@ object DolSpec extends Properties("DolSpec") {
   //  // the resulting generate type has _.totNumNodes <= N
   //}
 
-  def shiv(): Unit = {
+  def shiv(): Unit = { // code to run in repl
     val su = new SymbolUniverse()
-    println(genCanonicalObjType(su, Map()).sample)
+    val maybeProblem = genInferenceProblem(su, Map()).sample
+    maybeProblem match {
+      case Some(problem) =>
+          val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
+      case None =>
+        println("maybeProblem=None")
+    }
+
+    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem)) { (problem: InferenceProblem) =>
+      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
+      ("res = " + res + "") |: Prop.all(
+        res != None && NoFuture.equalTerms(su, res.get, problem.expected)) // TODO comparison that does not depend on var names.
+    }.check
+    println(properties)
   }
 
 }
