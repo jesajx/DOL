@@ -252,7 +252,7 @@ object Dol {
     }
 
 
-    def typeRenameVar(fromVar: Symbol, toVar: Symbol, t: Type): Type = t match {
+    def typeRenameVar(fromVar: Symbol, toVar: Symbol, typ: Type): Type = typ match {
       case TypeProj(x, a) if x == fromVar =>
         TypeProj(toVar, a)
       case FunType(x, xType, resType) if x != fromVar =>
@@ -272,16 +272,22 @@ object Dol {
           typeRenameVar(fromVar, toVar, left),
           typeRenameVar(fromVar, toVar, right))
       case _ =>
-        t
+        typ
     }
 
-    def typeRenameBoundVar(toVar: Symbol, t: Type): Type = t match {
+    def typeRenameBoundVar(toVar: Symbol, typ: Type): Type = typ match {
       case RecType(x, xType) if x != toVar =>
         RecType(toVar, typeRenameVar(x, toVar, xType))
       case FunType(x, xType, resType) if x != toVar =>
         FunType(toVar, xType, typeRenameVar(x, toVar, resType))
       case _ =>
-        t
+        typ
+    }
+    def termRenameBoundVar(toVar: Symbol, term: Term): Term = term match {
+      case Let(x, xTerm, resTerm) if x != toVar => termRenameVar(x, toVar, Let(toVar, xTerm, resTerm))
+      case Obj(x, xType, d)       if x != toVar => termRenameVar(x, toVar, Obj(toVar, xType, d))
+      case Fun(x, xType, resTerm) if x != toVar => termRenameVar(x, toVar, Fun(toVar, xType, resTerm))
+      case _ => term
     }
 
     def defRenameVar(fromVar: Symbol, toVar: Symbol, d: Def): Def = d match {
@@ -637,6 +643,29 @@ object Dol {
           s
       }
     }
+
+    def alphaRenameType(su: SymbolUniverse, typ: Type): Type = typ match {
+      case FunType(x, xType, resType)          => typeRenameBoundVar(su.newSymbol(), FunType(x, alphaRenameType(su, xType), alphaRenameType(su, resType)))
+      case RecType(x, xType)                   => typeRenameBoundVar(su.newSymbol(), RecType(x, alphaRenameType(su, xType)))
+      case FieldDecl(a, aType)                 => FieldDecl(a, alphaRenameType(su, aType))
+      case TypeDecl(a, aLowerType, aUpperType) => TypeDecl(a, alphaRenameType(su, aLowerType), alphaRenameType(su, aUpperType))
+      case AndType(left, right)                => AndType(alphaRenameType(su, left), alphaRenameType(su, right))
+      case _ => typ
+    }
+
+    def alphaRenameDef(su: SymbolUniverse, d: Def): Def = d match {
+      case FieldDef(a, aTerm)  => FieldDef(a, alphaRenameTerm(su, aTerm))
+      case AndDef(left, right) => AndDef(alphaRenameDef(su, left), alphaRenameDef(su, right))
+      case TypeDef(a, aType)   => TypeDef(a, alphaRenameType(su, aType))
+      case _ => d
+    }
+
+    def alphaRenameTerm(su: SymbolUniverse, term: Term): Term = term match {
+      case Let(x, xTerm, resTerm) => termRenameBoundVar(su.newSymbol(), Let(x, alphaRenameTerm(su, xTerm), alphaRenameTerm(su, resTerm)))
+      case Obj(x, xType, d)       => termRenameBoundVar(su.newSymbol(), Obj(x, alphaRenameType(su, xType), alphaRenameDef(su, d)))
+      case Fun(x, xType, resTerm) => termRenameBoundVar(su.newSymbol(), Fun(x, alphaRenameType(su, xType), alphaRenameTerm(su, resTerm)))
+      case _ => term
+    }
   }
 
 
@@ -780,43 +809,43 @@ object Dol {
     }
   }
 
-  def expandFutureTypes(t: Type)(cont: (Type) => Unit): Unit = t match {
+  def expandTypeFutures(t: Type)(cont: (Type) => Unit): Unit = t match {
     case FutureType(cell) =>
       onComplete(cell) {actualType =>
-        expandFutureTypes(actualType) {actualType =>
+        expandTypeFutures(actualType) {actualType =>
           cont(actualType)
         }
       }
     case FunType(x, xType, resType) =>
-      expandFutureTypes(xType) {newXType =>
-        expandFutureTypes(resType) {newResType =>
+      expandTypeFutures(xType) {newXType =>
+        expandTypeFutures(resType) {newResType =>
           cont(FunType(x, newXType, newResType))
         }
       }
     case RecType(x, xType) =>
-      expandFutureTypes(xType){newXType =>
+      expandTypeFutures(xType){newXType =>
         cont(RecType(x, newXType))
       }
     case FieldDecl(a, aType) =>
-      expandFutureTypes(aType){aType =>
+      expandTypeFutures(aType){aType =>
         cont(FieldDecl(a, aType))
       }
     case TypeDecl(a, aLowerType, aUpperType) =>
-      expandFutureTypes(aLowerType){newALowerType =>
-        expandFutureTypes(aUpperType){newAUpperType =>
+      expandTypeFutures(aLowerType){newALowerType =>
+        expandTypeFutures(aUpperType){newAUpperType =>
           cont(TypeDecl(a, newALowerType, newAUpperType))
         }
       }
     case AndType(leftType, rightType) =>
-      expandFutureTypes(leftType){newLeftType =>
-        expandFutureTypes(rightType){newRightType =>
+      expandTypeFutures(leftType){newLeftType =>
+        expandTypeFutures(rightType){newRightType =>
           cont(AndType(newLeftType, newRightType))
         }
       }
     //case PolyFunType(typeParams, params, resType) =>
     //  def k2(innerList: List[(Symbol, Type)])(cont: (List[(Symbol, Type)]) => Unit): Unit = innerList match {
     //    case (x, xType) :: rest =>
-    //      expandFutureTypes(xType) {newXType =>
+    //      expandTypeFutures(xType) {newXType =>
     //        k2(rest) {rest =>
     //          cont((x, newXType) :: rest)
     //        }
@@ -833,7 +862,7 @@ object Dol {
     //    case Nil => cont(Nil)
     //  }
     //  k(params) {params =>
-    //    expandFutureTypes(resType) {newResType =>
+    //    expandTypeFutures(resType) {newResType =>
     //      cont(PolyFunType(typeParams, params, newResType))
     //    }
     //  }
@@ -851,7 +880,7 @@ object Dol {
   def expandFutureScope(scope: Scope)(cont: (Scope) => Unit): Unit = {
     def r(s: List[(Symbol, Type)])(c: (List[(Symbol, Type)]) => Unit): Unit = s match {
       case (x, t) :: rest =>
-        expandFutureTypes(t){newT =>
+        expandTypeFutures(t){newT =>
           r(rest){newRest =>
             c((x, newT) :: newRest)
           }
@@ -1389,13 +1418,13 @@ object Dol {
               }
             }
           case Obj(x, xType, body) =>
-            expandFutureTypes(xType){xType =>
+            expandTypeFutures(xType){xType =>
               expandDefFutures(body){body =>
                 expandAssignedType(Obj(x, xType, body).withTypeOption(term.assignedType))(cont)
               }
             }
           case Fun(x, xType, body) =>
-            expandFutureTypes(xType){xType =>
+            expandTypeFutures(xType){xType =>
               expandTermFutures(body){body =>
                 expandAssignedType(Fun(x, xType, body).withTypeOption(term.assignedType))(cont)
               }
@@ -1432,8 +1461,12 @@ object Dol {
                 expandAssignedType(AndDef(left, right).withTypeOption(d.assignedType))(cont)
               }
             }
-          case _ => // TypeDecl
-            expandAssignedType(d)(cont)
+          case TypeDef(a, aType) =>
+            expandTypeFutures(aType){aType =>
+              expandAssignedType(TypeDef(a, aType).withTypeOption(d.assignedType))(cont)
+            }
+          case _ =>
+            ???
         }
     }
 
@@ -1634,81 +1667,174 @@ object Dol {
         cont(t)
     }
 
-    def alphaRename[T <: Tree](t: T)(cont: (T) => Unit): Unit = t match {
-      case FutureType(cell) =>
-        onComplete(cell){typ =>
-          alphaRename(typ)(cont.asInstanceOf[(Type) => Unit])
-        }
-      case FunType(x, xType, resType) =>
-        alphaRename(xType){xType =>
-          alphaRename(resType){resType =>
-            val z = symbolUniverse.newSymbol()
-            renameToUniqueVar(x, z, FunType(z, xType, resType))(cont.asInstanceOf[(Type) => Unit])
-          }
-        }
-      case RecType(x, xType) =>
-        alphaRename(xType){xType =>
-          val z = symbolUniverse.newSymbol()
-          renameToUniqueVar(x, z, RecType(z, xType))(cont.asInstanceOf[(Type) => Unit])
-        }
-      case FieldDecl(a, aType) =>
-        alphaRename(aType){newAType =>
-          cont.asInstanceOf[(Type) => Unit](FieldDecl(a, newAType))
-        }
-      case TypeDecl(a, aLowerType, aUpperType) =>
-        val newALowerType = futureType{
-          alphaRename(aLowerType)(_)
-        }
-        val newAUpperType = futureType{
-          alphaRename(aUpperType)(_)
-        }
-        cont.asInstanceOf[(Type) => Unit](TypeDecl(a, newALowerType, newAUpperType))
-      case AndType(left, right) =>
-        val newLeft = futureType{
-          alphaRename(left)(_)
-        }
-        val newRight = futureType{
-          alphaRename(right)(_)
-        }
-        cont.asInstanceOf[(Type) => Unit](AndType(newLeft, newRight))
-      case Let(x, xTerm, t) =>
-        val z = symbolUniverse.newSymbol()
-        alphaRename(xTerm){xTerm =>
-          alphaRename(t){t =>
-            cont.asInstanceOf[(Term) => Unit](exprRenameVar(x, z, Let(z, xTerm, t)))
-          }
-        }
-      case Obj(x, xType, d) =>
-        alphaRename(xType){xType =>
-          alphaRename(d){d =>
-            val z = symbolUniverse.newSymbol()
-            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Obj(z, xType, d)))
-          }
-        }
-      case Fun(x, xType, body) =>
-        alphaRename(xType){xType =>
-          alphaRename(body){body =>
-            val z = symbolUniverse.newSymbol()
-            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Fun(z, xType, body)))
-          }
-        }
-      case FieldDef(a, aTerm) =>
-        alphaRename(aTerm){aTerm =>
-          cont.asInstanceOf[(Def) => Unit](FieldDef(a, aTerm))
-        }
-      case TypeDef(a, aType) =>
-        alphaRename(aType){aType =>
-          cont.asInstanceOf[(Def) => Unit](TypeDef(a, aType))
-        }
-      case AndDef(left, right) =>
-        alphaRename(left){left =>
-          alphaRename(right){right =>
-            cont.asInstanceOf[(Def) => Unit](AndDef(left, right))
-          }
-        }
-      case _ =>
-        cont(t)
-    }
+//    def alphaRenameType(t: Type)(cont: (Type) => Unit): Unit = t match {
+//      case FutureType(cell) =>
+//        onComplete(cell){typ =>
+//          alphaRenameType(typ)(cont)
+//        }
+//      case FunType(x, xType, resType) =>
+//        alphaRenameType(xType){xType =>
+//          alphaRenameType(resType){resType =>
+//            val z = symbolUniverse.newSymbol()
+//            renameToUniqueVar(x, z, FunType(z, xType, resType))(cont)
+//          }
+//        }
+//      case RecType(x, xType) =>
+//        alphaRenameType(xType){xType =>
+//          val z = symbolUniverse.newSymbol()
+//          renameToUniqueVar(x, z, RecType(z, xType))(cont)
+//        }
+//      case FieldDecl(a, aType) =>
+//        alphaRenameType(aType){newAType =>
+//          cont(FieldDecl(a, newAType))
+//        }
+//      case TypeDecl(a, aLowerType, aUpperType) =>
+//        val newALowerType = futureType{
+//          alphaRenameType(aLowerType)(_)
+//        }
+//        val newAUpperType = futureType{
+//          alphaRenameType(aUpperType)(_)
+//        }
+//        cont(TypeDecl(a, newALowerType, newAUpperType))
+//      case AndType(left, right) =>
+//        val newLeft = futureType{
+//          alphaRenameType(left)(_)
+//        }
+//        val newRight = futureType{
+//          alphaRenameType(right)(_)
+//        }
+//        cont(AndType(newLeft, newRight))
+//      case _ =>
+//        cont(t)
+//    }
+//
+//    def alphaRenameDef(d: Def)(cont: (Def) => Unit): Unit = d match {
+//      case DefFuture(cell) =>
+//        onComplete(cell){d =>
+//          alphaRenameDef(d)(cont)
+//        }
+//      case FieldDef(a, aTerm) =>
+//        alphaRenameTerm(aTerm){aTerm =>
+//          cont(FieldDef(a, aTerm))
+//        }
+//      case TypeDef(a, aType) =>
+//        alphaRenameType(aType){aType =>
+//          cont(TypeDef(a, aType))
+//        }
+//      case AndDef(left, right) =>
+//        alphaRenameDef(left){left =>
+//          alphaRenameDef(right){right =>
+//            cont(AndDef(left, right))
+//          }
+//        }
+//      case _ => ???
+//    }
+//
+//    def alphaRenameTerm(t: Term)(cont: (Term) => Unit): Unit = t match {
+//      case TermFuture(cell) =>
+//        onComplete(cell){t =>
+//          alphaRenameTerm(t)(cont)
+//        }
+//      case Let(x, xTerm, resTerm) =>
+//        val z = symbolUniverse.newSymbol()
+//        alphaRenameTerm(xTerm){xTerm =>
+//          alphaRenameTerm(resTerm){resTerm =>
+//            cont(exprRenameVar(x, z, Let(z, xTerm, resTerm)))
+//          }
+//        }
+//      case Obj(x, xType, d) =>
+//        alphaRenameType(xType){xType =>
+//          alphaRenameDef(d){d =>
+//            val z = symbolUniverse.newSymbol()
+//            cont(exprRenameVar(x, z, Obj(z, xType, d)))
+//          }
+//        }
+//      case Fun(x, xType, body) =>
+//        alphaRenameType(xType){xType =>
+//          alphaRenameTerm(body){body =>
+//            val z = symbolUniverse.newSymbol()
+//            cont(exprRenameVar(x, z, Fun(z, xType, body)))
+//          }
+//        }
+//      case _ =>
+//        cont(t)
+//    }
+
+//    def alphaRename[T <: Tree](t: T)(cont: (T) => Unit): Unit = t match {
+//      case FutureType(cell) =>
+//        onComplete(cell){typ =>
+//          alphaRename(typ)(cont.asInstanceOf[(Type) => Unit])
+//        }
+//      case FunType(x, xType, resType) =>
+//        alphaRename(xType){xType =>
+//          alphaRename(resType){resType =>
+//            val z = symbolUniverse.newSymbol()
+//            renameToUniqueVar(x, z, FunType(z, xType, resType))(cont.asInstanceOf[(Type) => Unit])
+//          }
+//        }
+//      case RecType(x, xType) =>
+//        alphaRename(xType){xType =>
+//          val z = symbolUniverse.newSymbol()
+//          renameToUniqueVar(x, z, RecType(z, xType))(cont.asInstanceOf[(Type) => Unit])
+//        }
+//      case FieldDecl(a, aType) =>
+//        alphaRename(aType){newAType =>
+//          cont.asInstanceOf[(Type) => Unit](FieldDecl(a, newAType))
+//        }
+//      case TypeDecl(a, aLowerType, aUpperType) =>
+//        val newALowerType = futureType{
+//          alphaRename(aLowerType)(_)
+//        }
+//        val newAUpperType = futureType{
+//          alphaRename(aUpperType)(_)
+//        }
+//        cont.asInstanceOf[(Type) => Unit](TypeDecl(a, newALowerType, newAUpperType))
+//      case AndType(left, right) =>
+//        val newLeft = futureType{
+//          alphaRename(left)(_)
+//        }
+//        val newRight = futureType{
+//          alphaRename(right)(_)
+//        }
+//        cont.asInstanceOf[(Type) => Unit](AndType(newLeft, newRight))
+//      case Let(x, xTerm, t) =>
+//        val z = symbolUniverse.newSymbol()
+//        alphaRename(xTerm){xTerm =>
+//          alphaRename(t){t =>
+//            cont.asInstanceOf[(Term) => Unit](exprRenameVar(x, z, Let(z, xTerm, t)))
+//          }
+//        }
+//      case Obj(x, xType, d) =>
+//        alphaRename(xType){xType =>
+//          alphaRename(d){d =>
+//            val z = symbolUniverse.newSymbol()
+//            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Obj(z, xType, d)))
+//          }
+//        }
+//      case Fun(x, xType, body) =>
+//        alphaRename(xType){xType =>
+//          alphaRename(body){body =>
+//            val z = symbolUniverse.newSymbol()
+//            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Fun(z, xType, body)))
+//          }
+//        }
+//      case FieldDef(a, aTerm) =>
+//        alphaRename(aTerm){aTerm =>
+//          cont.asInstanceOf[(Def) => Unit](FieldDef(a, aTerm))
+//        }
+//      case TypeDef(a, aType) =>
+//        alphaRename(aType){aType =>
+//          cont.asInstanceOf[(Def) => Unit](TypeDef(a, aType))
+//        }
+//      case AndDef(left, right) =>
+//        alphaRename(left){left =>
+//          alphaRename(right){right =>
+//            cont.asInstanceOf[(Def) => Unit](AndDef(left, right))
+//          }
+//        }
+//      case _ =>
+//        cont(t)
+//    }
 
     def canonicalRenameToUniqueVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
       //case CanonicalObjType(x, fields, types, projs) if x == fromVar =>
@@ -1912,11 +2038,6 @@ object Dol {
     case class DefFuture(cell: Meh[Def]) extends Def { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
       val treeHeight = 1
       val totNumNodes = 1
-      assignedType = Some(canonicalFuture{cont =>
-        onComplete(cell){actualDef =>
-          cont(actualDef.assignedType.getOrElse(canonicalError()))
-        }
-      })
       def withTypeOption(typeOption: Option[CanonicalType]) = {
         val res = this.copy()
         res.assignedType = typeOption
@@ -1930,7 +2051,6 @@ object Dol {
 
     def error(): Type = {
       hasErrorsAtom.lazySet(true)
-      new Exception("HHHHHHEEEEERRRRREEEE").printStackTrace()
       ???
       ErrorType
     }
@@ -2078,7 +2198,7 @@ object Dol {
           val z = symbolUniverse.newSymbol()
           val renamedBody = exprRenameVar(x, z, body)
           val renamedYResPrototype = canonicalFuture{canonicalRenameToUniqueVar(y, z, resPrototype)(_)}
-          typecheckTerm(Fun(z, xType, renamedBody), CanonicalFunType(y, yPrototype, renamedYResPrototype, projs), scope)
+          typecheckTerm(Fun(z, xType, renamedBody), CanonicalFunType(z, yPrototype, renamedYResPrototype, projs), scope)
         case (Fun(x, xType, body), CanonicalFunType(y, argPrototype, resPrototype, projs)) if x == y =>
           val argType = canonicalize(symbolUniverse, scope, symbolUniverse.newSymbol(), xType)
           val typedBody = termFuture{cont =>
@@ -2128,7 +2248,7 @@ object Dol {
     }
 
     def run[T >: Null](f: ((T) => Unit) => Unit): Option[T] = {
-      println("tc")
+      //println("tc")
       val rootPromise = Promise[Option[T]]()
       launch {
         val rootCell = contFuture[T](f)
@@ -2154,11 +2274,9 @@ object Dol {
     }
 
     def fullTypecheck(term: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map())(cont: (Term) => Unit): Unit = {
-      alphaRename(term){term =>
-        val lazyTypedTerm = typecheckTerm(term, rootPrototype, rootScope)
-        expandTermFutures(lazyTypedTerm) { typedTerm =>
-          cont(typedTerm)
-        }
+      val lazyTypedTerm = typecheckTerm(term, rootPrototype, rootScope)
+      expandTermFutures(lazyTypedTerm) { typedTerm =>
+        cont(typedTerm)
       }
     }
 
