@@ -77,7 +77,7 @@ object DolSpec extends Properties("DolSpec") {
       if (subtype.totNumNodes == 1)
         oneOf(const(subtype), const(CanonicalTop))
       else
-        const(CanonicalBot)
+        const(CanonicalTop)
     } else {
       val extra: Seq[Gen[CanonicalType]] = subtype match {
         case CanonicalFunType(x, xType, resType, projs) if (size >= 3) =>
@@ -85,7 +85,7 @@ object DolSpec extends Properties("DolSpec") {
             subSize <- size - 1
             argSize <- Gen.choose(1, subSize)
             resSize <- subSize - argSize
-            xSubtype <- Gen.resize(argSize, genCanonicalSubtype(su, scope, xType))
+            xSubtype     <- Gen.resize(argSize, genCanonicalSubtype(su, scope, xType))
             resSupertype <- Gen.resize(resSize, genCanonicalSupertype(su, scope + (x -> xSubtype), resType))
             newProjs <- const(Set()) //newProjs <- someOf(projs) // TODO
             // TODO supertypes of projs? // remove/keep/supertype
@@ -194,9 +194,12 @@ object DolSpec extends Properties("DolSpec") {
 //        xSuperType <- nextSupertype(xType)
 //      } yield CanonicalFunType(x, xSuperType, resType, projs)
 //      val shrinkRes = for {
-//        resSubType <- nextSubtype(xType)
+//        resSubType <- nextSubtype(resType)
 //      } yield CanonicalFunType(x, xType, resSubType, projs)
-//      shrinkArg #::: shrinkRes
+//      val shrinkProjs = for {
+//        newProjs <- someOf(projs)
+//      } yield CanonicalFunType(x, xType, resType, newProjs)
+//      shrinkArg #::: shrinkRes #::: shrinkProjs
 //    case CanonicalBot =>
 //      Stream()
 //    case _ =>
@@ -206,6 +209,21 @@ object DolSpec extends Properties("DolSpec") {
 //  def nextSupertype(su: SymbolUniverse, scope: CanonicalScope, tp: CanonicalType): Stream[CanonicalType] = tp match {
 //    case CanonicalFunType(x, CanonicalBot, CanonicalTop, EmptySet()) =>
 //      Some(CanonicalTop)
+//    case CanonicalObjType(x, fields, types, projs) =>
+//      val shrinkFieldsByRemoving = for {
+//        newFields <- someOf(fields) if newFields.size < fields.size // TODO only remove one?
+//      } yield CanonicalObjType(x, newFields, types, projs)
+//      val shrinkFieldsBySuperTyping = for {
+//        newFields <- fields.map{case (a, aType) =>
+//          ???
+//        }
+//      } yield CanonicalObjType(x, newFields, types, projs)
+//      val shrinkTypesByRemoving = for {
+//        newTypes <- someOf(types) if newTypes.size < types.size // TODO check if someone is using them...
+//      } yield CanonicalObjType(x, newFields, newTypes, projs)
+//      val shrinkProjsByRemoving = for {
+//        newProjs <- someOf(projs) if newProjs.size < projs.size
+//      } yield CanonicalObjType(x, newFields, types, newProjs)
 //    //case CanonicalFunType(x, xType, resType, projs) =>
 //    case _ =>
 //      None
@@ -219,7 +237,12 @@ object DolSpec extends Properties("DolSpec") {
 
 
 
-  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term)
+  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term) {
+    if (!isTermFullyTyped(expected)) throw new Exception(s"not fully typed: $expected")
+    override def toString() = {
+      s"InferenceProblem($term, $prototype, $scope, ${NoFuture.stringExprWithTypeIfExists(expected)})"
+    }
+  }
 
   def genVarInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = {
     val justMakeSomethingUp = for {
@@ -237,7 +260,7 @@ object DolSpec extends Properties("DolSpec") {
     }
   }
 
-  def genSelInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = {
+  def genSelInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = { // TODO Gen.sized
     val possibilities = scope.flatMap{
       case (x, CanonicalObjType(_, fields, _, _)) => fields.toList.map{case (a, aType) => (x, a, aType)}
       case _ => List()
@@ -263,6 +286,8 @@ object DolSpec extends Properties("DolSpec") {
 
   //def genTermFromType
 
+
+
   def genAppInferenceProblemFromArg(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
     f <- const(su.newSymbol())
     x <- const(su.newSymbol())
@@ -277,7 +302,7 @@ object DolSpec extends Properties("DolSpec") {
     arg.scope ++ res.scope - x,
     Let(f,
       Fun(x, NoFuture.decanonicalize(argSuper), res.expected).withType(CanonicalFunType(x, argSuper, resType, Set())),
-      Let(y, arg.expected, App(f, y).withType(resType))
+      Let(y, arg.expected, App(f, y).withType(resType)).withType(resType)
       ).withType(resType))
 
   def genFunInferenceProblem(su: SymbolUniverse, scope: CanonicalScope): Gen[InferenceProblem] = for {
@@ -297,7 +322,6 @@ object DolSpec extends Properties("DolSpec") {
     x <- const(su.newSymbol)
     y <- const(su.newSymbol)
     p <- genInferenceProblem(su, scope)
-    u <- println(s"$p")
     typ <- const(p.expected.assignedType.get)
   } yield InferenceProblem(
     Let(f, Fun(x, NoFuture.decanonicalize(typ), Var(x)), Let(y, p.term, App(f, y))),
@@ -317,24 +341,143 @@ object DolSpec extends Properties("DolSpec") {
     genAppInferenceProblemFromArg(su, scope)
   )
 
-  def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem): Stream[InferenceProblem] = problem match {
-    //case InferenceProblem(Fun(x, xType, Var(y)), prototype, scope, typ) if x == y =>
-    //  InferenceProblem(Var(y), xType, scope + (x -> xType), typ)
-    //case InferenceProblem(Let(x, xTerm, term), prototype, scope, typ) =>
-    // TODO if we know the type of xTerm: InferenceProblem(term, prototype, scope + (x -> xType), typ)
-    // TODO replace typ with subtype that does not reference x.
-    // TODO remove stuff in scope that are not referenced.
-    case _ =>
-      Stream()
+  def isTermFullyTyped(term: Term): Boolean = {
+    if (term.assignedType == None) {
+      return false
+    }
+    term match {
+      case Let(x, xTerm, resTerm) =>
+        isTermFullyTyped(xTerm) && isTermFullyTyped(resTerm)
+      case Obj(x, xType, d) =>
+        NoFuture.defAsMap(d).values.map{
+          case FieldDef(a, aTerm) => isTermFullyTyped(aTerm)
+          case _ => true
+        }.reduce{_ && _}
+      case Fun(x, xType, resTerm) =>
+        isTermFullyTyped(resTerm)
+      case _ => true // Var, App, Sel
+    }
   }
 
+  def shrinkScopeIfPossible(problem: InferenceProblem): InferenceProblem = {
+
+    def bfs(usedVars: Set[Symbol]): Set[Symbol] = {
+      val reachable = usedVars.flatMap{x =>
+        NoFuture.freeVarsInCanonicalType(problem.scope(x))
+      }
+      val newUsedVars: Set[Symbol] = usedVars ++ reachable
+      if (newUsedVars.size == usedVars.size)
+        usedVars
+      else
+        bfs(newUsedVars)
+    }
+
+    val directlyUsedVars = problem.scope.keys.filter{x =>
+      (NoFuture.isVarFreeInExpr(x, problem.term)
+        || NoFuture.isVarFreeInCanonicalType(x, problem.prototype))
+    }.toSet
+    val allUsedVars = bfs(directlyUsedVars)
+
+    val newScope = allUsedVars.map{x => (x, problem.scope(x))}.toMap
+    InferenceProblem(problem.term, problem.prototype, newScope, problem.expected)
+  }
+
+  def shrinkScope(problem: InferenceProblem): Stream[InferenceProblem] = {
+    val newProblem = shrinkScopeIfPossible(problem)
+    if (newProblem.scope.size < problem.scope.size) Stream(newProblem) else Stream()
+  }
+
+  def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem, isRoot: Boolean = false): Stream[InferenceProblem] = {
+    var res = Stream[InferenceProblem]()
+
+    res = res #::: (problem match {
+      case InferenceProblem(Sel(x, a), prototype, scope, expected) =>
+        scope.get(x) match {
+          case Some(xType @ CanonicalObjType(y, fields, types, projs)) =>
+            val aType = fields(a)
+            val w = su.newSymbol()
+            val newScope =
+              if (scope.contains(y))
+                scope + (w -> aType)
+              else
+                scope + (w -> aType) + (y -> xType) // TODO
+            Stream(InferenceProblem(Var(w), prototype, newScope, Var(w).withType(expected.assignedType.get)))
+          case _ =>
+            Stream()
+        }
+      case _ => Stream()
+    })
+
+    res = res #::: (problem match {
+      case InferenceProblem(App(x, y), prototype, scope, expected) =>
+        scope.get(x) match {
+          case Some(CanonicalFunType(z, zType, zResType, projs)) =>
+            val w = su.newSymbol()
+            Stream(InferenceProblem(Var(w), prototype, scope + (w -> zResType), Var(w).withType(zResType)))
+          case _ =>
+            Stream()
+        }
+      case _ => Stream()
+    })
+    res = res #::: (problem match {
+      case InferenceProblem(Let(x, xTerm, resTerm), prototype, scope, expected @ Let(_, expectedXTerm, expectedResTerm)) =>
+        val xProblem = InferenceProblem(xTerm, CanonicalQue, scope, expectedXTerm)
+        val resProblem = InferenceProblem(resTerm, prototype, scope + (x -> expectedXTerm.assignedType.get), expectedResTerm)
+
+        val expectedType = expected.assignedType.get
+
+        val leftShrinks = for {
+          newXProblem <- shrinkInferenceProblem(su, xProblem)
+        } yield InferenceProblem(Let(x, newXProblem.term, resTerm), prototype, scope ++ newXProblem.scope, Let(x, newXProblem.expected, expectedResTerm).withType(expectedType))
+
+        val rightShrinks = for {
+          newResProblem <- shrinkInferenceProblem(su, resProblem)
+        } yield InferenceProblem(Let(x, xTerm, newResProblem.term), prototype, scope ++ newResProblem.scope, Let(x, expectedXTerm, newResProblem.expected).withType(expectedType))
+
+        if (isRoot) {
+          xProblem #:: resProblem #:: leftShrinks #::: rightShrinks
+        } else {
+          resProblem #:: rightShrinks
+        }
+      case _ => Stream()
+    })
+    res = res #::: (problem match {
+      case InferenceProblem(Fun(x, xType, resTerm), prototype, scope, expected @ Fun(_, _, expectedResTerm)) =>
+
+        val resPrototype = CanonicalQue // TODO base on prototype
+        val resProblem = InferenceProblem(resTerm, resPrototype, scope + (x -> NoFuture.canonicalize(su, scope, x, xType)), expectedResTerm)
+        val resShrinks = for {
+          newResProblem <- shrinkInferenceProblem(su, resProblem)
+        } yield InferenceProblem(Fun(x, xType, newResProblem.term), prototype, scope ++ newResProblem.scope, Fun(x, xType, newResProblem.expected).withType(expected.assignedType.get)) // TODO do something with prototype
+
+        if (isRoot)
+          resProblem #:: resShrinks
+        else
+          resShrinks
+      case _ => Stream()
+    })
+    // TODO remove function if root?
+    // TODO replace typ with subtype that does not reference x.
+    // TODO remove stuff in scope that are not referenced.
+    res.map{shrinkScopeIfPossible}
+  }
+
+  // TODO
   property("positiveParallelInferenceProblem") = {
+    println("p")
     val su = new SymbolUniverse()
-    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem)) { (problem: InferenceProblem) =>
-      // TODO check type of all terms, not just top.
+    Prop.forAllShrink(Gen.resize(3, genInferenceProblem(su, Map())), shrinkInferenceProblem(su, _: InferenceProblem, isRoot=true)) { (problem: InferenceProblem) =>
       val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
-      ("res = " + res + "") |: Prop.all(
-        res != None && NoFuture.equalTerms(su, res.get, problem.expected)) // TODO comparison that does not depend on var names.
+
+      val resString = res match {
+        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithType(resTerm)})"
+        case None => "res = None"
+      }
+      //val expectedString = s"expected = ${NoFuture.stringExprWithType(problem.expected)}"
+
+      //expectedString |:
+      resString |: Prop.all(
+        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
     }
   }
 
@@ -343,23 +486,39 @@ object DolSpec extends Properties("DolSpec") {
   //  // the resulting generate type has _.totNumNodes <= N
   //}
 
-  def shiv(): Unit = { // code to run in repl
-    val su = new SymbolUniverse()
-    val maybeProblem = genInferenceProblem(su, Map()).sample
-    maybeProblem match {
-      case Some(problem) =>
-          val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
-      case None =>
-        println("maybeProblem=None")
-    }
+//  property("shrinkPreservesTypecorrectness") = { // TODO
+//    //println("s")
+//    val su = new SymbolUniverse()
+//    val generator: Gen[(InferenceProblem, InferenceProblem)] = for {
+//      problem <- genInferenceProblem(su, Map()) //if typecheckInParallel(su, problem.term, problem.prototype, problem.scope) != None
+//      shrunkProblems <- const(shrinkInferenceProblem(su, problem, isRoot=true)) if !shrunkProblems.isEmpty
+//      newProblem <- oneOf(shrunkProblems)
+//    } yield (problem, newProblem)
+//    Prop.forAllNoShrink(generator) { (origAndShrunk: (InferenceProblem, InferenceProblem)) =>
+//      val (origProblem, newProblem) = origAndShrunk
+//      (s"newProblem = $newProblem"
+//        |: s"origProblem = $origProblem"
+//        |: Prop.all(
+//          typecheckInParallel(su, origProblem.term, origProblem.prototype, origProblem.scope) == None
+//          || typecheckInParallel(su, newProblem.term, newProblem.prototype, newProblem.scope) != None))
+//    }
+//  }
 
-    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem)) { (problem: InferenceProblem) =>
-      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
-      ("res = " + res + "") |: Prop.all(
-        res != None && NoFuture.equalTerms(su, res.get, problem.expected)) // TODO comparison that does not depend on var names.
-    }.check
-    println(properties)
+  def shiv(): Unit = {
+    val su = new SymbolUniverse(4000)
+    val term = Fun(9,RecType(12,AndType(FieldDecl(13,Bot),FieldDecl(14,Top))),Fun(20,RecType(37,AndType(FieldDecl(38,Top),FieldDecl(39,Top))),Var(20)))
+    val prototype = CanonicalQue
+    val scope: CanonicalScope = Map()
+    val res = typecheckInParallel(su, term, prototype, scope)
+    res match {
+      case Some(resTerm) =>
+        println(s"res --> ${NoFuture.stringExprWithTypeIfExists(resTerm)}")
+      case None =>
+        println(s"res --> None")
+    }
   }
+
+  // TODO check canonicalize(decanonicalize(_))
 
 }
 /* TODO:

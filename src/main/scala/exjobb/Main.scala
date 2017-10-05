@@ -6,8 +6,30 @@ import cell._
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val startTime = System.nanoTime()
+    shiv()
+  }
 
+  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term)
+
+  def shiv(): Unit = {
+    val su = new SymbolUniverse(4000)
+    val problem = InferenceProblem(
+      App(4,6),
+      CanonicalQue,
+      Map(4 -> CanonicalFunType(5,
+        CanonicalFunType(9,CanonicalTop,CanonicalBot,Set()),    CanonicalFunType(9,CanonicalTop,CanonicalBot,Set()),Set()),
+          6 -> CanonicalFunType(9,CanonicalTop,CanonicalFunType(14,CanonicalBot,CanonicalTop,Set()),Set())),
+      App(4,6).withType(CanonicalFunType(9,CanonicalTop,CanonicalBot,Set())))
+    val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
+    val resString = res match {
+      case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithType(resTerm)})"
+      case None => "res = None"
+    }
+    println(resString)
+  }
+
+  def dumbtest(): Unit = {
+    val startTime = System.nanoTime()
 
     val su = new SymbolUniverse()
     def cast(t: Term, tType: Type): Term = {
@@ -236,7 +258,7 @@ object Main {
     }
 
     val pool = new HandlerPool(1) // TODO
-    val tc  = new Typechecker(su, pool, new AtomicBoolean(false))
+    val tc  = Parallel(su, pool, new AtomicBoolean(false))
 
     //val e = idIdExample()
     //val e = numberExample()
@@ -258,31 +280,6 @@ object Main {
     println("smurf")
     println(s"$e --->          $res")
 
-    //val eType = tc.run{cont =>
-    //  tc.fullInfer(e)(cont)
-    //}
-
-    //tc.run[CanonicalType]{cont =>
-    //  val x = su.newSymbol()
-    //  val a = su.newSymbol()
-    //  //val aPrototype = CanonicalObjType(x, Map(), Map(a -> (CanonicalBot, CanonicalTop)), Set())
-    //  //tc.canonicalRaise(Map(), CanonicalObjType(x, Map(), Map(a -> (CanonicalTop, CanonicalTop)), Set()), aPrototype)(cont)
-
-    //  val aPrototype = CanonicalObjType(x, Map(), Map(a -> (CanonicalBot, CanonicalTop)), Set())
-    //  tc.canonicalRaise(Map(), CanonicalObjType(x, Map(), Map(a -> (CanonicalTop, CanonicalTop)), Set()), aPrototype) {b =>
-    //    tc.expandCanonicalFutureTypes(b){b =>
-    //      println(s"PHASERES: $b")
-    //    }
-    //  }
-
-    //  //tc.canonicalLower(scope, CanonicalTop, CanonicalBot){l =>
-    //  //  tc.canonicalRaise(scope, CanonicalTop, CanonicalTop){ u =>
-    //  //    println(s"PHASERES: $l, $u")
-    //  //  }
-    //  //}
-
-    //  cont(CanonicalErrorType)
-    //}
 
 
     val endTime = System.nanoTime()

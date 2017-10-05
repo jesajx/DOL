@@ -216,14 +216,14 @@ object Dol {
   }
 
   object NoFuture {
-    def canonicalRenameToUniqueVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType): CanonicalType = t match {
+    def canonicalTypeRenameVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType): CanonicalType = t match {
       case CanonicalObjType(x, fields, types, projs) if x != fromVar =>
         val newFields = fields.map{case (a, aType) =>
-          a -> NoFuture.canonicalRenameToUniqueVar(fromVar, toVar, aType)
+          a -> NoFuture.canonicalTypeRenameVar(fromVar, toVar, aType)
         }
         val newTypes = types.map{case (a, (aLowerType, aUpperType)) =>
-          a -> (NoFuture.canonicalRenameToUniqueVar(fromVar, toVar, aLowerType),
-                NoFuture.canonicalRenameToUniqueVar(fromVar, toVar, aUpperType))
+          a -> (NoFuture.canonicalTypeRenameVar(fromVar, toVar, aLowerType),
+                NoFuture.canonicalTypeRenameVar(fromVar, toVar, aUpperType))
         }
         val newProjs = projs.map{
           case TypeProj(y, a) if fromVar == y => TypeProj(toVar, a)
@@ -231,8 +231,8 @@ object Dol {
         }
         CanonicalObjType(x, newFields, newTypes, newProjs)
       case CanonicalFunType(x, xType, resType, projs) if x != fromVar =>
-        val newXType = NoFuture.canonicalRenameToUniqueVar(fromVar, toVar, xType)
-        val newResType = NoFuture.canonicalRenameToUniqueVar(fromVar, toVar, resType)
+        val newXType = NoFuture.canonicalTypeRenameVar(fromVar, toVar, xType)
+        val newResType = NoFuture.canonicalTypeRenameVar(fromVar, toVar, resType)
         val newProjs = projs.map{
           case TypeProj(y, a) if fromVar == y => TypeProj(toVar, a)
           case t => t
@@ -241,6 +241,16 @@ object Dol {
       case _ =>
         t
     }
+
+    def canonicalTypeRenameBoundVar(toVar: Symbol, t: CanonicalType): CanonicalType = t match {
+      case CanonicalObjType(x, fields, types, projs) if x != toVar =>
+        canonicalTypeRenameVar(x, toVar, CanonicalObjType(toVar, fields, types, projs))
+      case CanonicalFunType(x, xType, resType, projs) if x != toVar =>
+        canonicalTypeRenameVar(x, toVar, CanonicalFunType(toVar, xType, resType, projs))
+      case _ =>
+        t
+    }
+
 
     def typeRenameVar(fromVar: Symbol, toVar: Symbol, t: Type): Type = t match {
       case TypeProj(x, a) if x == fromVar =>
@@ -261,6 +271,15 @@ object Dol {
         AndType(
           typeRenameVar(fromVar, toVar, left),
           typeRenameVar(fromVar, toVar, right))
+      case _ =>
+        t
+    }
+
+    def typeRenameBoundVar(toVar: Symbol, t: Type): Type = t match {
+      case RecType(x, xType) if x != toVar =>
+        RecType(toVar, typeRenameVar(x, toVar, xType))
+      case FunType(x, xType, resType) if x != toVar =>
+        FunType(toVar, xType, typeRenameVar(x, toVar, resType))
       case _ =>
         t
     }
@@ -394,8 +413,8 @@ object Dol {
       case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x != y =>
         val z = su.newSymbol()
         canonicalEqualTypes(su,
-          NoFuture.canonicalRenameToUniqueVar(x, z, CanonicalObjType(z, xFields, xTypes, xProjs)),
-          NoFuture.canonicalRenameToUniqueVar(y, z, CanonicalObjType(z, yFields, yTypes, yProjs)))
+          NoFuture.canonicalTypeRenameVar(x, z, CanonicalObjType(z, xFields, xTypes, xProjs)),
+          NoFuture.canonicalTypeRenameVar(y, z, CanonicalObjType(z, yFields, yTypes, yProjs)))
       case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x == y =>
         (xFields.keys == yFields.keys
           && xTypes.keys == yTypes.keys
@@ -409,8 +428,8 @@ object Dol {
       case (CanonicalFunType(x, xType, xResType, xAlias), CanonicalFunType(y, yType, yResType, yAlias)) if x != y =>
         val z = su.newSymbol()
         canonicalEqualTypes(su,
-          NoFuture.canonicalRenameToUniqueVar(x, z, CanonicalFunType(z, xType, xResType, xAlias)),
-          NoFuture.canonicalRenameToUniqueVar(y, z, CanonicalFunType(z, yType, yResType, yAlias)))
+          NoFuture.canonicalTypeRenameVar(x, z, CanonicalFunType(z, xType, xResType, xAlias)),
+          NoFuture.canonicalTypeRenameVar(y, z, CanonicalFunType(z, yType, yResType, yAlias)))
       case (CanonicalFunType(x, xType, xResType, xAlias), CanonicalFunType(y, yType, yResType, yAlias)) if x == y =>
         (canonicalEqualTypes(su, xType, yType)
           && canonicalEqualTypes(su, xResType, yResType)
@@ -441,6 +460,7 @@ object Dol {
         ErrorType
     }
 
+
     def typeProject(scope: CanonicalScope, x: Symbol, a: Symbol): Option[(CanonicalType, CanonicalType)] = for {
       xType <- scope.get(x)
       aType <- xType match {
@@ -456,6 +476,167 @@ object Dol {
     def typeProjectLower(scope: CanonicalScope, x: Symbol, a: Symbol): Option[CanonicalType] = for {
       (aLowerType, _) <- typeProject(scope, x, a)
     } yield aLowerType
+
+    def canonicalLeastCommonSupertype(su: SymbolUniverse, scope: CanonicalScope, firstType: CanonicalType, secondType: CanonicalType): CanonicalType = ???
+
+    def canonicalGreatestCommonSubtype(su: SymbolUniverse, scope: CanonicalScope, firstType: CanonicalType, secondType: CanonicalType): CanonicalType = (firstType, secondType) match {
+      case (CanonicalObjType(x, _, _, _), CanonicalObjType(y, _, _, _)) if x != y || scope.contains(x) =>
+        val z = su.newSymbol()
+        canonicalGreatestCommonSubtype(su, scope,
+          canonicalTypeRenameBoundVar(z, firstType),
+          canonicalTypeRenameBoundVar(z, secondType))
+      case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x == y =>
+        // TODO do we need to add x to scope?
+        val fields = mapUnion(xFields, yFields){(left, right) =>
+          canonicalGreatestCommonSubtype(su, scope, left, right)
+        }
+
+        val types = mapUnion(xTypes, yTypes){(left, right) =>
+          (left, right) match {
+            case ((leftLower, leftUpper), (rightLower, rightUpper)) =>
+              (canonicalLeastCommonSupertype(su, scope, leftLower, rightLower),
+               canonicalGreatestCommonSubtype(su, scope, leftUpper, rightUpper))
+          }
+        }
+
+        val projs = xProjs ++ yProjs // TODO what if yProjs refer to x?
+
+        CanonicalObjType(x, fields, types, projs)
+      case (CanonicalFunType(x, xType, xResType, xProjs), CanonicalFunType(y, yType, yResType, yProjs)) if x != y =>
+        val z = su.newSymbol()
+        canonicalGreatestCommonSubtype(su, scope,
+          canonicalTypeRenameBoundVar(z, firstType),
+          canonicalTypeRenameBoundVar(z, secondType))
+      case (CanonicalFunType(x, xType, firstResType, xProjs), CanonicalFunType(y, yType, secondResType, yProjs)) if x == y =>
+        val commonArgType = canonicalLeastCommonSupertype(su, scope, xType, yType) // TODO is lub correct here? probably since glb of res can't refer to something that only exists in one of xType/yType. maybe have to double check in commonResType?
+        val commonResType = canonicalGreatestCommonSubtype(su, scope + (x -> commonArgType), firstResType, secondResType)
+        val projs = xProjs ++ yProjs // TODO what if yProjs refer to x?
+        CanonicalFunType(x, commonArgType, commonResType, projs)
+      case (CanonicalTop, _) => secondType
+      case (_, CanonicalTop) => firstType
+      case (CanonicalBot, _) => firstType
+      case (_, CanonicalBot) => secondType
+      case _ => ???;  CanonicalErrorType // TODO
+    }
+
+    // TODO
+    def canonicalize(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, zType: Type): CanonicalType = zType match {
+      case RecType(x, xType) =>
+        canonicalize(su, scope, z, typeRenameVar(x, z, xType))
+      case AndType(left, right) =>
+        val canonicalLeft = canonicalize(su, scope, z, left)
+        val canonicalRight = canonicalize(su, scope, z, right)
+        val commonType = canonicalGreatestCommonSubtype(su, scope, canonicalLeft, canonicalRight)
+
+        canonicalTypeRenameBoundVar(z, commonType)
+      case proj @ TypeProj(x, a) if scope.contains(x) =>
+        CanonicalObjType(z, Map(), Map(), Set(proj))
+      case decl @ FieldDecl(a, aType) =>
+        val aCanonicalType = canonicalize(su, scope, su.newSymbol(), aType)
+        CanonicalObjType(z, Map(a -> aCanonicalType), Map(), Set())
+      case decl @ TypeDecl(a, aLowerType, aUpperType) =>
+        val aLowerCanonicalType = canonicalize(su, scope, su.newSymbol(), aLowerType)
+        val aUpperCanonicalType = canonicalize(su, scope, su.newSymbol(), aUpperType)
+        CanonicalObjType(z, Map(), Map(a -> (aLowerCanonicalType, aUpperCanonicalType)), Set())
+      case FunType(x, _, _) if scope.contains(x) =>
+        canonicalize(su, scope, z, typeRenameBoundVar(su.newSymbol(), zType))
+      case FunType(x, xType, resType) if !scope.contains(x) =>
+        val canonicalXType = canonicalize(su, scope, su.newSymbol(), xType) // TODO vs using "x"?
+        val y = su.newSymbol()
+        val canonicalResType = canonicalize(su, scope + (x -> canonicalXType), y, resType)
+        CanonicalFunType(y, canonicalXType, canonicalResType, Set())
+      case Top => CanonicalTop
+      case Bot => CanonicalBot
+      case Que => CanonicalQue
+      case _ => ??? ; CanonicalErrorType // TODO
+    }
+
+    def freeVarsInCanonicalType(typ: CanonicalType): Set[Symbol] = typ match {
+      case CanonicalFunType(x, xType, resType, projs) =>
+        (freeVarsInCanonicalType(xType)
+          ++ freeVarsInCanonicalType(resType)
+          ++ projs.map{case TypeProj(y, _) => y}).toSet - x
+      case CanonicalObjType(x, fields, types, projs) =>
+        (fields.values.flatMap{freeVarsInCanonicalType}
+          ++ types.values.flatMap{case (a,b) => Seq(a,b)}.flatMap{freeVarsInCanonicalType}
+          ++ projs.map{case TypeProj(y, _) => y}).toSet - x
+      case _ => Set() // Bot, Top, Que
+    }
+
+    def isVarFreeIn(z: Symbol, t: Tree): Boolean = t match {
+      case expr: Expr => isVarFreeInExpr(z, expr)
+      case typ: Type => isVarFreeInType(z, typ)
+      case typ: CanonicalType => isVarFreeInCanonicalType(z, typ)
+    }
+
+    def isVarFreeInCanonicalType(z: Symbol, typ: CanonicalType): Boolean = typ match {
+      case CanonicalFunType(x, xType, resType, projs) if x != z =>
+        (isVarFreeInCanonicalType(z, xType)
+          || isVarFreeInCanonicalType(z, resType)
+          || projs.map{case TypeProj(y, a) => (y == z)}.fold(false){_ || _})
+      case CanonicalObjType(x, fields, types, projs) if x != z =>
+        (fields.values.map{isVarFreeInCanonicalType(z, _)}.fold(false){_ || _}
+          || types.values.flatMap{case (a,b) => Seq(a,b)}.map{isVarFreeInCanonicalType(z, _)}.fold(false){_ || _}
+          || projs.map{case TypeProj(y, a) => (y == z)}.fold(false){_ || _})
+      case _ => false // Bot, Top, Que
+    }
+
+    def isVarFreeInType(z: Symbol, typ: Type): Boolean = typ match {
+      case TypeProj(x, a) => (x == z)
+      case FunType(x, xType, resType) if x != z =>
+        isVarFreeInType(z, xType) || isVarFreeInType(z, resType)
+      case RecType(x, xType) if x != z =>
+        isVarFreeInType(z, xType)
+      case FieldDecl(a, aType) =>
+        isVarFreeInType(z, aType)
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        isVarFreeInType(z, aLowerType) || isVarFreeInType(z, aUpperType)
+      case AndType(left, right) =>
+        isVarFreeInType(z, left) || isVarFreeInType(z, right)
+      case _ => false // Bot, Top, Que
+    }
+
+    def isVarFreeInExpr(z: Symbol, e: Expr): Boolean = e match {
+      case Var(x)                 => (x == z)
+      case Sel(x, a)              => (x == z)
+      case App(x, y)              => (x == z || y == z)
+      case Let(x, xTerm, resTerm) if x != z => isVarFreeInExpr(z, xTerm) || isVarFreeInExpr(z, resTerm)
+      case Obj(x, xType, d)       if x != z => isVarFreeInType(z, xType) || isVarFreeInExpr(z, d)
+      case Fun(x, xType, resTerm) if x != z => isVarFreeInType(z, xType) || isVarFreeInExpr(z, resTerm)
+      case FieldDef(a, aTerm)     => isVarFreeInExpr(z, aTerm)
+      case TypeDef(a, aType)      => isVarFreeInType(z, aType)
+      case AndDef(left, right)    => (isVarFreeInExpr(z, left) || isVarFreeInExpr(z, right))
+      case _ => false
+    }
+
+    def stringExprWithType(expr: Expr): String = {
+      val s = expr match {
+        case Let(x, xTerm, resTerm) => s"Let($x, ${stringExprWithType(xTerm)}, ${stringExprWithType(resTerm)})"
+        case Obj(x, xType, d)       => s"Obj($x, $xType, ${stringExprWithType(d)})"
+        case Fun(x, xType, resTerm) => s"Fun($x, $xType, ${stringExprWithType(resTerm)})"
+        case FieldDef(a, aTerm)     => s"FieldDef($a, ${stringExprWithType(aTerm)})"
+        case AndDef(left, right)    => s"AndDef(${stringExprWithType(left)}, ${stringExprWithType(right)})"
+        case _ => s"$expr"
+      }
+      s"$s.withTypeOption(${expr.assignedType})"
+    }
+
+    def stringExprWithTypeIfExists(expr: Expr): String = {
+      val s = expr match {
+        case Let(x, xTerm, resTerm) => s"Let($x, ${stringExprWithTypeIfExists(xTerm)}, ${stringExprWithTypeIfExists(resTerm)})"
+        case Obj(x, xType, d)       => s"Obj($x, $xType, ${stringExprWithTypeIfExists(d)})"
+        case Fun(x, xType, resTerm) => s"Fun($x, $xType, ${stringExprWithTypeIfExists(resTerm)})"
+        case FieldDef(a, aTerm)     => s"FieldDef($a, ${stringExprWithTypeIfExists(aTerm)})"
+        case AndDef(left, right)    => s"AndDef(${stringExprWithTypeIfExists(left)}, ${stringExprWithTypeIfExists(right)})"
+        case _ => s"$expr"
+      }
+      expr.assignedType match {
+        case Some(typ) =>
+          s"$s.withType($typ)"
+        case None =>
+          s
+      }
+    }
   }
 
 
@@ -567,7 +748,6 @@ object Dol {
     }
   }
 
-  // TODO decanonicalize?
 
   object EmptyMap {
     def unapply[K, V](x: Map[K, V]): Boolean = {
@@ -758,7 +938,7 @@ object Dol {
     def empty = true
   }
 
-  class Typechecker(val symbolUniverse: SymbolUniverse, val pool: HandlerPool, val hasErrorsAtom:  AtomicBoolean) {
+  case class Parallel(val symbolUniverse: SymbolUniverse, val pool: HandlerPool, val hasErrorsAtom:  AtomicBoolean) {
     // TODO smarter futureType that does not always fork? e.g. r(..., asFutureTypePlease=true) and chooses to make a future or not
 
     def launch(f: => Unit) {
@@ -795,29 +975,29 @@ object Dol {
     def canonicalError() = {error() ; CanonicalErrorType}
 
 
-    def canonicalize(scope: CanonicalScope, typ: Type): CanonicalFuture = {
-        val z = symbolUniverse.newSymbol()
+    def canonicalize(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, zType: Type): CanonicalFuture = {
         val zCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
         val zCanonicalType = CanonicalFuture(zCompleter.cell)
         launch {
-          canonicalType(scope + (z -> zCanonicalType), z, typ, Set()) {
+          canonicalType(su, scope + (z -> zCanonicalType), z, zType) {
             zCompleter.putFinal(_)
           }
         }
         zCanonicalType
     }
 
-    def canonicalType(scope: CanonicalScope, z: Symbol, zType: Type, visitedProjs: Set[TypeProj])(cont: (CanonicalType) => Unit): Unit = zType match {
+    // TODO visitedProjs-param unnecessary?
+    def canonicalType(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, zType: Type)(cont: (CanonicalType) => Unit): Unit = zType match {
       case RecType(x, xType) =>
         renameToUniqueVar(x, z, xType){
-          canonicalType(scope, z, _, visitedProjs)(cont)
+          canonicalType(su, scope, z, _)(cont)
         }
       case AndType(left, right) =>
         val leftCell = contFuture[CanonicalType] {
-          canonicalType(scope, z, left, visitedProjs)(_)
+          canonicalType(su, scope, z, left)(_)
         }
         val rightCell = contFuture[CanonicalType] {
-          canonicalType(scope, z, right, visitedProjs)(_)
+          canonicalType(su, scope, z, right)(_)
         }
         onComplete(leftCell.zipFinal(rightCell)) {case (leftType, rightType) =>
           canonicalGreatestCommonSubtype(scope, leftType, rightType){
@@ -833,22 +1013,22 @@ object Dol {
         // TODO expand to glb(x.a, upper(x.a)) here?
         cont(CanonicalObjType(z, Map(), Map(), Set(proj)))
       case decl @ FieldDecl(a, aType) =>
-        val aCanonicalType = canonicalize(scope, aType)
+        val aCanonicalType = canonicalize(su, scope, su.newSymbol(), aType)
         cont(CanonicalObjType(z, Map(a -> aCanonicalType), Map(), Set()))
       case decl @ TypeDecl(a, aLowerType, aUpperType) =>
-        val aLowerCanonicalType = canonicalize(scope, aLowerType)
-        val aUpperCanonicalType = canonicalize(scope, aUpperType)
+        val aLowerCanonicalType = canonicalize(su, scope, su.newSymbol(), aLowerType)
+        val aUpperCanonicalType = canonicalize(su, scope, su.newSymbol(), aUpperType)
         cont(CanonicalObjType(z, Map(), Map(a -> (aLowerCanonicalType, aUpperCanonicalType)), Set()))
       case FutureType(cell) =>
         onComplete(cell){
-          canonicalType(scope, z, _, visitedProjs)(cont)
+          canonicalType(su, scope, z, _)(cont)
         }
       case FunType(x, xType, resType) =>
         val y = symbolUniverse.newSymbol()
-        val canonicalXType = canonicalize(scope, xType)
+        val canonicalXType = canonicalize(su, scope, su.newSymbol(), xType)
         val canonicalResType = CanonicalFuture(contFuture{c =>
           renameToUniqueVar(x, y, resType){
-            canonicalType(scope, y, _, visitedProjs)(c)
+            canonicalType(su, scope, y, _)(c)
           }
         })
         cont(CanonicalFunType(y, canonicalXType, canonicalResType, Set()))
@@ -1028,8 +1208,9 @@ object Dol {
         //val fields = xFields.mapValues{_ => CanonicalBot}
         //val types = ??? // (Que,Que) --> (Bot,Top)? (Top, Bot)? forbid (Que,Que)?
         //canonicalRaise(CanonicalObjType(x, fields, types, Set()), p)(cont)
-        ???
-      case _ =>
+        ??? // TODO
+      case _ => // TODO
+        println(s"canonicalRaise(_, $t, $p) fail")
         cont(canonicalError())
     }
 
@@ -1618,7 +1799,7 @@ object Dol {
 
         val fields = xFields.map{case (a, aType) =>
           a -> canonicalFuture{
-            eliminateScopeUp(localScope, localKillScope, aType)(_) // TODO
+            eliminateScopeUp(localScope, localKillScope, aType)(_)
           }
         }
         val types = xTypes.map{case (a, (aLowerType, aUpperType)) =>
@@ -1640,11 +1821,11 @@ object Dol {
         cont(CanonicalObjType(x, fields, types, Set())) // TODO canonicalLeastCommonSupertype(..., projs)
       case CanonicalFunType(x, xType, resType, projs) =>
         val newXType = canonicalFuture{
-          eliminateScopeDown(scope, killScope, xType)(_) // TODO
+          eliminateScopeDown(scope, killScope, xType)(_)
         }
+        val localScope = scope + (x -> xType) // TODO vs newXType?
         val newResType = canonicalFuture{
-          val localScope = scope + (x -> xType) // TODO vs newXType?
-          eliminateScopeUp(localScope, killScope, resType)(_) // TODO
+          eliminateScopeUp(localScope, killScope - x, resType)(_)
         }
 
         val newProjs = projs // TODO
@@ -1677,14 +1858,15 @@ object Dol {
         val projs = xProjs.map{
           case TypeProj(y, a) if localKillScope.contains(y) =>
             canonicalFuture{c =>
-              typeProjectLower(localScope, y, a){aUpperType =>
-                // TODO Check if aUpperType ----> TypeProj(y, a) again and
+              typeProjectLower(localScope, y, a){aLowerType =>
+                // TODO Check if aLowerType ----> TypeProj(y, a) again and
                 // raise to Top as necessary. Otherwise this may recurse infinitely...
-                eliminateScopeDown(scope, localKillScope, aUpperType)(c)
+                eliminateScopeDown(scope, localKillScope, aLowerType)(c)
               }
             }
           case proj @ _ => CanonicalObjType(x, Map(), Map(), Set(proj))
         }
+        cont(CanonicalObjType(x, fields, types, Set())) // TODO glb(..., projs)
       case CanonicalFunType(x, xType, resType, projs) =>
         val newXType = canonicalFuture{
           eliminateScopeUp(scope, killScope, xType)(_) // TODO
@@ -1711,7 +1893,7 @@ object Dol {
       contCell(lattice)(f)
     }
 
-    case class TermFuture(cell: Meh[Term]) extends Term { // NOTE: Nested, so that Typechecker.pool is in scope. Don't mix with other Typechecker instances!
+    case class TermFuture(cell: Meh[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
       val treeHeight = 1
       val totNumNodes = 1
       assignedType = Some(canonicalFuture{cont =>
@@ -1727,7 +1909,7 @@ object Dol {
       def withType(typ: CanonicalType) = withTypeOption(Some(typ))
     }
 
-    case class DefFuture(cell: Meh[Def]) extends Def { // NOTE: Nested, so that Typechecker.pool is in scope. Don't mix with other Typechecker instances!
+    case class DefFuture(cell: Meh[Def]) extends Def { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
       val treeHeight = 1
       val totNumNodes = 1
       assignedType = Some(canonicalFuture{cont =>
@@ -1748,7 +1930,8 @@ object Dol {
 
     def error(): Type = {
       hasErrorsAtom.lazySet(true)
-      //???
+      new Exception("HHHHHHEEEEERRRRREEEE").printStackTrace()
+      ???
       ErrorType
     }
 
@@ -1794,6 +1977,7 @@ object Dol {
           val typedXTerm = termFuture{cont =>
             cont(typecheckTerm(xTerm, CanonicalQue, scope))
           }
+
           val xType = typedXTerm.assignedType.getOrElse(canonicalError())
           if (scope.contains(x)) { // assume alpha-renamed.
             ???
@@ -1804,9 +1988,11 @@ object Dol {
           val typedResTerm = termFuture{cont =>
             cont(typecheckTerm(resTerm, p, localScope))
           }
+
+          val resType = typedResTerm.assignedType.getOrElse(canonicalError())
           Let(x, typedXTerm, typedResTerm).withType{
             canonicalFuture{cont =>
-              eliminateScopeUp(localScope, Map(x -> xType), typedResTerm.assignedType.getOrElse(canonicalError()))(cont)
+              eliminateScopeUp(localScope, Map(x -> xType), resType)(cont)
             }
           }
         case (Sel(x, a), p) =>
@@ -1826,12 +2012,10 @@ object Dol {
             }
           }
         case (Obj(x, xType, objBody), p) =>
-          val xCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
-          val xCanonicalType = CanonicalFuture(xCompleter.cell)
-
-          canonicalType(scope + (x -> xCanonicalType), x, xType, Set()) {res =>
-            xCompleter.putFinal(res)
+          if (scope.contains(x)) {
+            ??? // TODO
           }
+          val xCanonicalType = canonicalize(symbolUniverse, scope, x, xType)
 
           val localScope = scope + (x -> xCanonicalType)
 
@@ -1845,7 +2029,7 @@ object Dol {
                 FieldDef(a, typedATerm) // TODO Invent non-recursive CanonicalObjType?
               case TypeDef(a, aType) =>
                 val (aLowerPrototype, aUpperPrototype) = types.getOrElse(a, (CanonicalQue, CanonicalQue))
-                val aCanonicalType = canonicalize(localScope, aType)
+                val aCanonicalType = canonicalize(symbolUniverse, localScope, symbolUniverse.newSymbol(), aType)
                 val aLowerType = canonicalFuture{
                   canonicalLower(localScope, aCanonicalType, aLowerPrototype)(_)
                 }
@@ -1896,7 +2080,7 @@ object Dol {
           val renamedYResPrototype = canonicalFuture{canonicalRenameToUniqueVar(y, z, resPrototype)(_)}
           typecheckTerm(Fun(z, xType, renamedBody), CanonicalFunType(y, yPrototype, renamedYResPrototype, projs), scope)
         case (Fun(x, xType, body), CanonicalFunType(y, argPrototype, resPrototype, projs)) if x == y =>
-          val argType = canonicalize(scope, xType)
+          val argType = canonicalize(symbolUniverse, scope, symbolUniverse.newSymbol(), xType)
           val typedBody = termFuture{cont =>
             cont(typecheckTerm(body, resPrototype, scope + (x -> argType)))
           }
@@ -1909,7 +2093,7 @@ object Dol {
             CanonicalFunType(x, loweredArgType, typedBody.assignedType.getOrElse(canonicalError()), projs)
           }
         case (Fun(x, xType, body), CanonicalTop) =>
-          val argType = canonicalize(scope, xType)
+          val argType = canonicalize(symbolUniverse, scope, symbolUniverse.newSymbol(), xType)
           val typedBody = termFuture{cont =>
             cont(typecheckTerm(body, CanonicalTop, scope + (x -> argType)))
           }
@@ -1944,6 +2128,7 @@ object Dol {
     }
 
     def run[T >: Null](f: ((T) => Unit) => Unit): Option[T] = {
+      println("tc")
       val rootPromise = Promise[Option[T]]()
       launch {
         val rootCell = contFuture[T](f)
@@ -1955,10 +2140,13 @@ object Dol {
       try {
         val incompleteCellsAtTheEnd = Await.result(pool.quiescentIncompleteCells, 10.seconds) // TODO
         if (incompleteCellsAtTheEnd.size != 0) {
+          if (hasErrorsAtom.get())
+            throw new NotImplementedError("quiescent with incomplete cells AND errors")
+          else
+            throw new TimeoutException("quiescent with incomplete cells")
           None
-        } else {
-          await(rootPromise.future)
         }
+        await(rootPromise.future)
       } catch {
         case e: TimeoutException => e.printStackTrace(); None
         case e: NotImplementedError => e.printStackTrace(); None
@@ -1974,11 +2162,11 @@ object Dol {
       }
     }
 
-  } // end class Typechecker
+  } // end class Parallel
 
   def typecheckInParallel(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map()): Option[Term] = {
     val pool         = new HandlerPool(1) // TODO
-    val typeChecker  = new Typechecker(symbolUniverse, pool, new AtomicBoolean(false))
+    val typeChecker  = Parallel(symbolUniverse, pool, new AtomicBoolean(false))
     typeChecker.run[Term]{
       typeChecker.fullTypecheck(rootExpr, rootPrototype, rootScope)(_)
     }
@@ -1986,7 +2174,7 @@ object Dol {
 
   //def pinfer(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: CanonicalPrototype = CanonicalQue, rootScope: Map[Symbol, CanonicalType] = Map()): Option[CanonicalType] = {
   //  val pool         = new HandlerPool(1) // TODO
-  //  val typeChecker  = new Typechecker(symbolUniverse, pool, new AtomicBoolean(false))
+  //  val typeChecker  = Parallel(symbolUniverse, pool, new AtomicBoolean(false))
   //  val res = typeChecker.run[CanonicalType]{typeChecker.fullInfer(rootExpr, rootPrototype, rootScope)(_)}
   //  res
   //}
