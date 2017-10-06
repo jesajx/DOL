@@ -214,6 +214,7 @@ object Dol {
     val treeHeight = 1
     val totNumNodes = 1
   }
+  // TODO lazy futures? i.e. wrap future in lazy type such that the cell is never created.
 
   object NoFuture {
     def canonicalTypeRenameVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType): CanonicalType = t match {
@@ -535,7 +536,8 @@ object Dol {
         val commonType = canonicalGreatestCommonSubtype(su, scope, canonicalLeft, canonicalRight)
 
         canonicalTypeRenameBoundVar(z, commonType)
-      case proj @ TypeProj(x, a) if scope.contains(x) =>
+      case proj @ TypeProj(x, a) =>
+        // TODO check scope.contains(x)?
         CanonicalObjType(z, Map(), Map(), Set(proj))
       case decl @ FieldDecl(a, aType) =>
         val aCanonicalType = canonicalize(su, scope, su.newSymbol(), aType)
@@ -554,7 +556,8 @@ object Dol {
       case Top => CanonicalTop
       case Bot => CanonicalBot
       case Que => CanonicalQue
-      case _ => ??? ; CanonicalErrorType // TODO
+      case _ =>
+        ??? ; CanonicalErrorType // TODO
     }
 
     def freeVarsInCanonicalType(typ: CanonicalType): Set[Symbol] = typ match {
@@ -666,6 +669,245 @@ object Dol {
       case Fun(x, xType, resTerm) => termRenameBoundVar(su.newSymbol(), Fun(x, alphaRenameType(su, xType), alphaRenameTerm(su, resTerm)))
       case _ => term
     }
+
+    def eliminateVarUp(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, typ: CanonicalType, visited: Set[TypeProj]): CanonicalType = typ match {
+      case CanonicalObjType(x, xFields, xTypes, xProjs) if x != z =>
+        ???
+//        val localScope = scope + (x -> typ)
+//
+//        val fields = xFields.map{case (a, aType) =>
+//          a -> eliminateVarUp(su, localScope, z, aType, visited)
+//        }
+//        val types = xTypes.map{case (a, (aLowerType, aUpperType)) =>
+//          a -> (eliminateVarDown(su, localScope, z, aLowerType, visited)},
+//                eliminateVarUp(su, localScope, z, aUpperType, visited)})
+//        }
+//
+//        val projsToRaise = projs.filter{case TypeProj(y, a) => (y == z)}
+//        val keptProjs = projs -- projsToRaise
+//
+//        val raised = projsToRaise.map{
+//          case proj @ TypeProj(y, a) =>
+//            if (visited(proj))
+//              CanonicalBot // Note that this is equivalent to removing the projection (with lub, below).
+//            else
+//              eliminateVarUp(su, scope, z, typeProjectUpper(scope, y, a).getOrElse(CanonicalBot), visited + proj)
+//        }
+//        // TODO bot+lub is probably wrong here.... e.g. what if there is only
+//        // one proj? then res should be Top, NOT Bot.
+//
+//        val withoutRaisedProjs = CanonicalFunType(x, newXType, newResType, keptProjs)
+//        val withRaisedProjs = raised.fold(withoutRaisedProjs){canonicalLeastCommonSupertype(su, scope, _, _)} // TODO is lub correct here?
+//        withRaisedProjs
+      case CanonicalFunType(x, xType, resType, projs) if x != z =>
+        val newXType = eliminateVarDown(su, scope, x, xType, visited)
+        val newResType = eliminateVarUp(su, scope + (x -> xType), x, resType, visited)
+        /** TODO we may need to eliminate x from resType?
+         * y.T: {R: A..D}..{R: B..C}
+         * fun(x: y.T): x.R
+         * eliminate y.
+         * fun(x: {R: B..C}): x.R
+         *
+         * -------------
+         *
+         * y.T: {R: A..D}..top
+         * fun(x: y.T): x.R
+         * assertion: for x.R to work, x <: {R: A..D}, which it is not since {R: A..D} <: y.T <: top, i.e. {R: A..D} <: x, not the other way around.
+         * TODO: but we can still construct types like that, so special-case? -- No, let the part of the code that tries to use x.R handle that.
+         *
+         * -------------
+         *
+         * y.T: {R: A..D}..y.T
+         * equivalent to: y.T: {R: A..D}..{R: A..D}
+         *
+         * -------------
+         *
+         * y.T: y.T..y.T
+         * equivalent to: y.T: Bot..Top
+         *
+         * -------------
+         *
+         * y.D: y.T..y.T
+         * y.T: y.D..y.D
+         * equivalent to:
+         * y.D: Bot..Top
+         * y.T: y.D..y.D
+         * or:
+         * y.D: y.D..y.D
+         * y.T: Bot..Top
+         *
+         * -------------
+         *
+         * y.D: y.D..y.T
+         * y.T: y.T..y.D
+         * equal to: // ???
+         * y.D: Bot..y.T
+         * y.T: Bot..y.D
+         *
+         * -------------
+         *
+         * y.T: {R: A..D}..Top
+         * fun(x: fun(y.T, y.T)): fun(y.T, y.T)
+         * eliminate y.
+         * fun(x: fun(Bot, Top)): fun(A, D) ???
+         *
+         * So if x is raised to something that is nolonger a object (top),
+         * then x has to be eliminated from res.
+         *
+         */
+
+        /** TODO (x -> xType) vs (x -> newXType) ??
+         *
+         * Does not matter since we are not eliminating on x? newResType will never look up x?
+         * What about glb? It does not lookup x either (only does unions on proj-sets).
+         *
+         * (However: when in parallel it is better to use xType, such that resType does
+         * not have to wait for newXType to compute.)
+         *
+         */
+
+        val projsToRaise = projs.filter{case TypeProj(y, a) => (y == z)}
+        val keptProjs = projs -- projsToRaise
+
+        val raised = projsToRaise.map{
+          case proj @ TypeProj(y, a) =>
+            if (visited(proj))
+              CanonicalTop // Note that this is equivalent to removing the projection (with glb, below).
+            else
+              eliminateVarUp(su, scope, z, typeProjectUpper(scope, y, a).getOrElse(CanonicalTop), visited + proj)
+            // x.T: bot..x.D
+            // x.D: A..top
+            // then x.T should be replaced with Top, and NOT A, since:
+            // x.T is a subtype of SOME x.D, not necesarily A.
+            // e.g. x.T <: D, A <: D <: Top
+        }
+
+        // A & B & C
+        // becomes:
+        // upper(A) & upper(B) & upper(C)
+        // TODO double-, triple- and quadruple-check this.
+        // TODO hmmm... whenever someone uses a function, don't they have to expand to a supertype?
+        //
+        //
+        // The least restrictive function is the lowest one. Therefore glb
+        // should make sense here....
+        /** TODO Is lib correct here?
+         *
+         * f: A => B
+         * g: C => D
+         *
+         * (f & g)   ===   glb(f, g) ???
+         *
+         * ----
+         *
+         * ((A => B) & (C => D)) <: lub(A, C) => glb(B, D)  ???
+         *
+         * (A => B) <: lub(A, C) => glb(B, D)   ???
+         * lub(A, C) <: A   (NO)
+         * B <: glb(B, D)   (NO)
+         *
+         * (C => D) <: lub(A, C) => glb(B, D)   ???
+         * ... (NO)
+         *
+         * ----
+         *
+         * (lub(A, C)) => (glb(B, D))  <: ((A => B) & (C => D))   ???
+         *
+         * (lub(A, C)) => (glb(B, D))  <: (A => B)   ???
+         * A <: lub(A, C)        (true)
+         * glb(B, D) <: B        (true)
+         *
+         * (lub(A, C)) => (glb(B, D))  <: (C => D)   ???
+         * C <: (lub(A, C))        (true)
+         * (glb(B, D)) <: D        (true)
+         *
+         * ---
+         *
+         * glb(f, g) <: (f & g) <: lub(f, g)   ???
+         *
+         * ---
+         * f <: f'
+         * g <: g'
+         *
+         * f & g <: f' & g' ???
+         *
+         * f & g <: f' ???
+         * f & g <: f <: f'    (yes)
+         *
+         * f & g <: g' ???
+         * f & g <: g <: g'    (yes)
+         *
+         * ---
+         * f <: f'
+         *
+         * f & g <: f' ???
+         * f & g <: f <: f' (yes)
+         *
+         *
+         *
+         * TODO CanonicalFunType can probably not represent all funtypes in
+         * DOT. Need AndTypes...
+         */
+
+        val withoutRaisedProjs = CanonicalFunType(x, newXType, newResType, keptProjs)
+        val withRaisedProjs = raised.fold(withoutRaisedProjs){canonicalGreatestCommonSubtype(su, scope, _, _)} // TODO is lub correct here?
+        withRaisedProjs
+      case _ =>
+        typ
+    }
+
+    def eliminateVarDown(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, typ: CanonicalType, visited: Set[TypeProj]): CanonicalType = typ match {
+      case CanonicalObjType(x, xFields, xTypes, xProjs) if x != z =>
+        ??? // TODO
+      case CanonicalFunType(x, xType, resType, projs) if x != z =>
+        val newXType = eliminateVarUp(su, scope, x, xType, visited)
+        val newResType = eliminateVarDown(su, scope + (x -> xType), x, resType, visited)
+        /** TODO we may need to eliminate x from resType?
+         * y.T: {R: A..D}..{R: B..C}
+         * fun(x: y.T): x.R
+         * eliminate y down.
+         * fun(x: {R: B..C}): x.R
+         *
+         * ------------
+         *
+         * y.T: Bot..{R: B..C}
+         * fun(x: y.T): x.R
+         * eliminate y down.
+         * fun(x: {R: B..C}): x.R
+         * But probably not a minimal elimination...
+         *
+         * So it should be fine to change the type of x, as long as the change
+         * abides subtyping-constraints.
+         *
+         * ------------
+         */
+
+        /** TODO Is it fine to pass visited as-is between eliminateVarUp and eliminateVarDown? YES, e.g.:
+         * y.T: fun(y.T, y.T)..R
+         * eliminate y down.
+         * fun(y.T, y.T)
+         * eliminate y down.
+         * fun(Top, Bot)
+         */
+
+        val projsToLower = projs.filter{case TypeProj(y, a) => (y == z)}
+        val keptProjs = projs -- projsToLower
+
+        val lowered = projsToLower.map{
+          case proj @ TypeProj(y, a) =>
+            if (visited(proj))
+              CanonicalTop
+            else
+              eliminateVarDown(su, scope, z, typeProjectLower(scope, y, a).getOrElse(CanonicalTop), visited + proj)
+        }
+
+        val withoutLoweredProjs = CanonicalFunType(x, newXType, newResType, keptProjs)
+        val withLoweredProjs = lowered.fold[CanonicalType](withoutLoweredProjs){canonicalGreatestCommonSubtype(su, scope, _, _)}  // TODO is glb correct here?
+        withLoweredProjs
+      case _ =>
+        typ
+    }
+
   }
 
 
@@ -1039,7 +1281,6 @@ object Dol {
           }
         }
       case proj @ TypeProj(x, a) if scope.contains(x) =>
-        // TODO expand to glb(x.a, upper(x.a)) here?
         cont(CanonicalObjType(z, Map(), Map(), Set(proj)))
       case decl @ FieldDecl(a, aType) =>
         val aCanonicalType = canonicalize(su, scope, su.newSymbol(), aType)
@@ -2019,7 +2260,7 @@ object Dol {
       contCell(lattice)(f)
     }
 
-    case class TermFuture(cell: Meh[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
+    case class TermFuture(cell: Meh[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances! // TODO pool as argument instead?
       val treeHeight = 1
       val totNumNodes = 1
       assignedType = Some(canonicalFuture{cont =>
@@ -2048,6 +2289,31 @@ object Dol {
 
     def termFuture(f: ((Term) => Unit) => Unit) = this.TermFuture(contFuture(f))
     def defFuture(f: ((Def) => Unit) => Unit) = this.DefFuture(contFuture(f))
+
+//    class CanonicalLazyFuture(atom: AtomicReference[CanonicalFuture], putter: ((CanonicalType) => Unit) => Unit) extends CanonicalPrototype {
+//      val treeHeight = 2
+//      val totNumNodes = 2
+//
+//      def get: CanonicalFuture = {
+//        var current = atom.get()
+//        while (current == null) {
+//          val completer = newCellCompleter[CanonicalType](pool, Lattice.trivial)
+//          val future = CanonicalFuture(completer.cell)
+//          if (atom.compareAndSet(null, future)) {
+//            launch {
+//              putter {typ =>
+//                completer.putFinal(typ)
+//              }
+//            }
+//            current = future
+//          } else {
+//            freeze(completer)
+//          }
+//        }
+//        current
+//      }
+//    }
+
 
     def error(): Type = {
       hasErrorsAtom.lazySet(true)
