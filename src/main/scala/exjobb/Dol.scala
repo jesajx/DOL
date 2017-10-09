@@ -217,6 +217,303 @@ object Dol {
   // TODO lazy futures? i.e. wrap future in lazy type such that the cell is never created.
 
   object NoFuture {
+
+    def typeProjectUpper2(scope: Scope, x: Symbol, a: Symbol): Seq[Type] = ???
+    def typeProjectLower2(scope: Scope, x: Symbol, a: Symbol): Seq[Type] = ???
+
+    def minType(scope: Scope, left: Type, right: Type): Option[Type] = ???
+
+    sealed trait Constraint
+
+    case object TrueConstraint extends Constraint
+    case object FalseConstraint extends Constraint
+    case class OrConstraint(left: Constraint, right: Constraint) extends Constraint
+    case class AndConstraint(left: Constraint, right: Constraint) extends Constraint
+    case class SubtypeConstraint(scope: Scope, left: Type, right: Type) extends Constraint
+    // TODO replace AndConstraint and OrConstraint with mergine constraints?
+    // and({A <: X <: B}, {C <: X <: D}) = {max(A, C) <: X <: min(B, D)}
+    // or({A <: X <: B}, {C <: X <: D}) = {min(A, C) <: X <: max(B, D)}?
+    // Will glb=min and lub=max work?
+    // min=AndType?
+
+    def leastCommonSupertype(scope: Scope, l1: Type, l2: Type): Type = ???
+    def greatestCommonSubtype(scope: Scope, u1: Type, u2: Type): Type = ???
+
+    def solveConstraint(solveSet: Set[TypeProj], constraint: Constraint): Map[TypeProj, Type] = {
+      // TODO DNF? then MIN of each OR.
+      // TODO Constraint -> Seq[(Type, TypeProj, Type)] ???
+
+
+      def dnfToOrSeqInner(constraint: Constraint): Seq[SubtypeConstraint] = constraint match {
+        case AndConstraint(left, right)    => dnfToOrSeqInner(left) ++ dnfToOrSeqInner(right)
+        case constraint: SubtypeConstraint => Seq(constraint)
+      }
+      def dnfToOrSeq(constraint: Constraint): Seq[Seq[SubtypeConstraint]] = constraint match {
+        case OrConstraint(left, right)     => dnfToOrSeq(left) ++ dnfToOrSeq(right)
+        case constraint: AndConstraint     => Seq(dnfToOrSeqInner(constraint))
+        case constraint: SubtypeConstraint => Seq(Seq(constraint))
+      }
+
+      def mergeConstraints(left: Map[TypeProj, (Scope, Type, Type)], right: Map[TypeProj, (Scope, Type, Type)]): Map[TypeProj, (Scope, Type, Type)] = {
+        mapUnion(left, right){case ((s1, l1, u1), (s2, l2, u2)) =>
+          val commonScope = s1 ++ s2 // TODO will concatenating scopes work? If the same var map to the same type and has otherwise been renamed... having different scopes seems wrong in the first place...
+          (commonScope, leastCommonSupertype(commonScope, l1, l2), greatestCommonSubtype(commonScope, u1, u2))
+        }
+      }
+
+      def asConstraint3(c: SubtypeConstraint): Map[TypeProj, (Scope, Type, Type)] = c match {
+        case SubtypeConstraint(scope, left, proj: TypeProj)  if solveSet(proj) => Map(proj -> (scope, left, Top)) // TODO get rid of scope somehow?
+        case SubtypeConstraint(scope, proj: TypeProj, right) if solveSet(proj) => Map(proj -> (scope, Bot, right))
+      }
+      def subsolve(cs: Seq[SubtypeConstraint]): Option[Map[TypeProj, Type]] = {
+        val defaults = solveSet.map(p => (p -> (Map(): Scope, Bot, Top))).toMap
+        val finalBounds = cs.map{asConstraint3}.toList.fold(defaults){mergeConstraints}
+        ???
+        //finalBounds.map{case (p, (_, lower, _)) => (p -> lower)} // TODO depends on variance?
+        // TODO if !(lower <: upper) None
+      }
+
+      def solve(cs: Seq[Seq[SubtypeConstraint]]): Map[TypeProj, Type] = {
+        val solutions = cs.map{subsolve}
+        solutions.filter
+      }
+
+      // TODO var-elimination.
+      val dnfConstraint = dnf(constraint)
+      dnfConstraint match {
+        case FalseConstraint => None
+        case TrueConstraint  => solveSet.map(p => (p -> Bot)).toMap // TODO check variance?
+        case _               => solve(dnfToOrSeq(dnfConstraint))
+      }
+    }
+
+//    def cnf(constraint: Constraint): Constraint = constraint match { // TODO maybe dnf instead?
+//      case AndConstraint(left, right)                      => AndConstraint(cnf(left), cnf(right))
+//      case OrConstraint(AndConstraint(left, right), other) => AndConstraint(cnf(OrConstraint(left, other)), cnf(OrConstraint(right, other)))
+//      case OrConstraint(other, AndConstraint(left, right)) => AndConstraint(cnf(OrConstraint(other, left)), cnf(OrConstraint(other, right)))
+//      case _                                               => constraint
+//    }
+
+    // TODO optimize away TrueConstraint and FalseConstraint
+
+    def dnf(constraint: Constraint): Constraint = constraint match { // TODO maybe dnf instead?
+      case OrConstraint(left, right)                       => orConstraint(dnf(left), dnf(right))
+      case AndConstraint(OrConstraint(left, right), other) => orConstraint(dnf(andConstraint(left, other)), dnf(andConstraint(right, other)))
+      case AndConstraint(other, OrConstraint(left, right)) => orConstraint(dnf(andConstraint(other, left)), dnf(andConstraint(other, right)))
+      case _                                               => constraint
+    }
+
+    def andConstraint(left: Constraint, right: Constraint): Constraint = (left, right) match {
+      case (TrueConstraint, _)  => right
+      case (_, TrueConstraint)  => left
+      case (FalseConstraint, _) => FalseConstraint
+      case (_, FalseConstraint) => FalseConstraint
+      case _ => AndConstraint(left, right)
+    }
+
+    def orConstraint(left: Constraint, right: Constraint): Constraint = (left, right) match {
+      case (TrueConstraint, _)  => TrueConstraint
+      case (_, TrueConstraint)  => TrueConstraint
+      case (FalseConstraint, _) => right
+      case (_, FalseConstraint) => left
+      case _ => OrConstraint(left, right)
+    }
+
+    def prep(su: SymbolUniverse, z: Symbol, to: Prototype): (Type, Set[TypeProj]) = {
+      def r(to: Prototype): (Type, Set[TypeProj]) = to match {
+        case Que =>
+          val a = su.newSymbol()
+          val proj = TypeProj(z, a)
+          (proj, Set(proj))
+        case AndType(left, right) =>
+          val (leftRes, leftSet)   = prep(su, scope, z, left, to)
+          val (rightRes, rightSet) = prep(su, scope, z, right, to)
+          (AndType(leftRes, rightRes), leftSet ++ rightSet)
+        case FunType(x, xType, resType) =>
+          val (newXType, leftSet) = prep(xType)
+          val (newResType, rightSet) = prep(resType)
+          (FunType(x, newXType, newResType), leftSet ++ rightSet)
+        case RecType(x, xType) =>
+          val (newXType, set) = prep(xType)
+          (RecType(x, newXType), set)
+        case FieldDecl(a, aType) =>
+          val (newAType, set) = prep(aType)
+          (FieldDecl(a, newAType), set)
+        case TypeDecl(a, aLowerType, aUpperType) =>
+          val (newLowerType, leftSet) = prep(xType)
+          val (newUpperType, rightSet) = prep(resType)
+          (TypeDecl(a, newLowerType, newUpperType), leftSet ++ rightSet)
+        case _ => (to, Set())
+      }
+    }
+
+    def gather(scope: Scope, solveSet: Set[TypeProj], rootFrom: Type, rootTo: Prototype): Constraint = {
+      def gath(scope: Scope, from: Type, to: Type, visitedUp: Set[TypeProj], visitedDown: Set[TypeProj]): Seq[(Type, Type)] = (from, to) match {
+        case (FieldDecl(a, aType), Top) => gath(from, FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
+        case (Bot, FieldDecl(a, aType)) => gath(FieldDecl(a, Bot), to)
+
+        case (Bot, TypeDecl(a, aLowerType, aUpperType)) => ??? // TODO TrueConstraint?
+        case (TypeDecl(a, aLowerType, aUpperType), Top) => gath(from, TypeDecl(a, Bot, Top))
+
+        case (FunType(x, _, _), Top) => gath(from, FunType(x, Bot, Top))
+        case (Bot, FunType(x, _, _)) => gath(FunType(x, Top, Bot), to)
+
+        case (RecType(x, xType), _) if !scope.contains(x) => gath(scope + (x -> xType), xType, to)
+        case (_, RecType(y, yType)) if !scope.contains(x) => gath(scope + (y -> yType), from, yType)
+
+        case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
+          AndConstraint(
+            gath(scope, xType, yType),
+            gath(scope + (x -> xType) + (y -> yType), xResType, yResType)) // TODO technically: x==y && (x -> min(xType, yType))
+        case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y => ???
+          AndConstraint(
+            gath(scope, xType, yType),
+            gath(scope + (x -> AndType(xType, yType)), xResType, yResType)) // TODO
+
+        case (_, AndType(left, right)) => AndConstraint(gath(from, left), gath(from, right))
+        case (AndType(left, right), _) => OrConstraint(gath(left, to), gath(right, to)) // TODO can we avoid the or by expanding further somehow? e.g. min(leftC,rightC)
+
+        case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b))  =>
+          if (aProj == bProj) {
+            TrueConstraint
+          } else if (solveSet(aProj) && solveSet(bProj)) {
+            FalseConstraint // TODO
+          } else {
+            val aUppertype = if (visited(aProj)) Top else typeProjectUpper2(scope, x, a)
+            val aLowertype = if (visited(bProj)) Bot else typeProjectLower2(scope, y, b)
+            OrConstraint(
+              gath(scope, aUppertype, bProj, visitedUp + aProj, visitedDown),
+              gath(scope, aProj, bLowertype, visitedUp, visitedDown + bProj))
+          }
+
+        case (aProj @ TypeProj(x, a), _) =>
+          if (solveSet(aProj)) {
+            SubtypeConstraint(scope, from, to)
+          } else {
+            val aUppertype = if (visited(aProj)) Top else typeProjectUpper2(scope, x, a)
+            gath(scope, aLowertype, to, visitedUp + aProj, visitedDown)
+          }
+
+        case (_, bProj @ TypeProj(y, b)) =>
+          if (solveSet(bProj)) {
+            SubtypeConstraint(scope, from, to)
+          } else {
+            val aLowertype = if (visited(bProj)) Bot else typeProjectLower2(scope, y, b)
+            gath(scope, aProj, aLowertype)
+          }
+
+        case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b => gath(aType, bType)
+
+        case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
+          AndConstraint(gath(bLowerType, aLowerType), gath(aUpperType, bUpperType))
+
+        case (Top, Top) => TrueConstraint
+        case (Bot, Top) => TrueConstraint
+        case (Bot, Bot) => TrueConstraint
+
+        case _ => FalseConstraint
+      }
+      r(rootFrom, rootTo, Set(), Set())
+    }
+
+
+    def raise(scope: Scope, from: Type, to: Prototype): Option[Type] = {
+      prep(to)
+    }
+
+//    def lower(scope: Scope, from: Type, to: Prototype, visitedUp: Set[TypeProj], visitedDown: Set[TypeProj]): Option[Type] = ???
+//
+//    // TODO INV: visitedUp.map{p => p <: from}
+//    // TODO INV: visitedDown.map{p => to <: p}
+//    def raise(scope: Scope, from: Type, to: Prototype, visitedUp: Set[TypeProj], visitedDown: Set[TypeProj]): Option[Type] = (from, to) match {
+//      case (_, Que) =>
+//        Some(from)
+//      case (_, Top) =>
+//        Some(Top)
+//      case (RecType(x, xType), RecType(y, yType)) if x == y => // TODO use z = result of raise? what happens when we do y.T?
+//        for {
+//          res <- raise(scope, xType, yType, visitedUp, visitedDown)
+//        } yield RecType(x, res)
+//      case (RecType(x, xType), _) =>
+//        ??? // TODO canonicalize? No, Rec(x, ... Rec(y, y.T)) then y.T is NOT the same as x.T? No, x: RecType(x, xType) means x: xType. so RecTypes can be canonicalized.
+//      case (_, RecType(y, yType)) =>
+//        ???
+//      case (_, AndType(left, right)) =>
+//        for {
+//          leftRaise <- raise(from, left)
+//          rightRaise <- raise(from, right)
+//        } yield AndType(leftRaise, rightRaise)
+//      case (AndType(left, right), _) =>
+//        (raise(left, to), raise(right, to)) match {
+//          case (Some(leftRaise), Some(rightRaise)) => typeMin(leftRaise, rightRaise)
+//          case (Some(leftRaise), None)             => leftRaise
+//          case (None, Some(rightRaise))            => rightRaise
+//          case (None, None)                        => None
+//        }
+//      case (TypeProj(x, a), TypeProj(y, b)) if x == y && a == b =>
+//        Some(to)
+//      case (from @ TypeProj(x, a), to @ TypeProj(y, b)) if !(x == y && a == b) =>
+//        // TODO What if y.b = Que..Que?
+//        // Maybe we should treat raise() as a constraint-solving problem...
+//        // Replace each Que (even outside TypeDecls) with a TypeProj.
+//
+//
+//        val aUpperAlts = if (visitedUp(from)) Seq(Top) else typeProjectUpper2(scope, x, a)
+//        val leftAlts = aUpperAtls.map{aUpper => raise(scope, aUpper, to, visitedUp + from, visitedDown)}.flatten
+//
+//        val bLowerAlts = if (visitedDown(to)) Seq(Bot) else typeProjectLower2(scope, y, b)
+//        val rightAlts = bLowerAlts.map{bLower => raise(scope, from, bLower, visitedDown, visitedUp + to)}.flatten
+//
+//        // TODO Is it bad to use raise(a,b) in place of isSubtypeOf(a,b)?
+//        // Won't raise(a,b) fail when there are multiple options while
+//        // isSubtypeOf(a,b) is fine as long as there _are_ options?
+//        // The problem is that b might reduce to Que in our case,
+//        // e.g. y: {T: Que..Que}).
+//        // Let raise return Seq[Type] instead of Option[Type]?
+//
+//        if ((leftAlts ++ rightAlts).flatten.size != 0)
+//          Some(To)
+//        else
+//          None
+//      case (_, to @ TypeProj(y, b)) if !(x == y && a == b) =>
+//        val aUpper = if (visitedUp(from)) Top else typeProjectUpper2(scope, x, a)
+//        raise(scope, aUpper, to, visitedUp + from, visitedDown)
+//      case (from @ TypeProj(x, a), _) if !(x == y && a == b) =>
+//        val aUpper = if (visitedUp(from)) Top else typeProjectUpper2(scope, x, a)
+//        raise(scope, aUpper, to, visitedUp + from, visitedDown)
+//      case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
+//        ??? // TODO rename
+//      case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
+//        for {
+//          argType <- lower(scope, xType, yType)
+//          resType <- raise(scope, xResType, yResType)
+//        } yield FunType(x, argType, resType)
+//      case (Bot, FunType(x, xType, resType)) =>
+//        raise(scope, FunType(x, Top, Bot), to)
+//      case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
+//        for {
+//          cType <- raise(scope, aType, bType)
+//        } yield FieldDecl(a, cType)
+//      case (Bot, FieldDecl(a, aType)) =>
+//        raise(scope, FieldDecl(a, Bot), to)
+//      case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
+//        for {
+//          lowerBound <- lower(scope, aLowerType, bLowerType, visitedUp, visitedDown)
+//          upperBound <- raise(scope, aUpperType, bUpperType, visitedUp, visitedDown)
+//          lowerBoundRaisedToUpperBound <- raise(scope, lowerBound, upperBound, visitedUp, visitedDown) // NOTE: only to check for errors.
+//        } yield TypeDecl(a, lowerBound, upperBound)
+//      case (Bot, TypeDecl(a, aLowerType, aUpperType)) =>
+//        ??? // TODO is this correct? what if to=TypeDecl(a, Que, Que)? res=TypeDecl(a, Bot, Top)?, res=TypeDecl(a, x.a, x.a)?
+//        for {
+//          lowerBound <- lower(scope, Top, aLowerType, visitedUp, visitedDown)
+//          upperBound <- raise(scope, Bot, aUpperType, visitedUp, visitedDown)
+//          lowerBoundRaisedToUpperBound <- raise(scope, lowerBound, upperBound, visitedUp, visitedDown) // NOTE: only to check for errors.
+//        } yield TypeDecl(a, lowerBound, upperBound)
+//      case _ =>
+//        None
+//    }
+
+
     def canonicalTypeRenameVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType): CanonicalType = t match {
       case CanonicalObjType(x, fields, types, projs) if x != fromVar =>
         val newFields = fields.map{case (a, aType) =>
@@ -1258,7 +1555,7 @@ object Dol {
     }
 
     // TODO visitedProjs-param unnecessary?
-    def canonicalType(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, zType: Type)(cont: (CanonicalType) => Unit): Unit = zType match {
+    def canonicalType(su: SymbolUniverse, scope: CanonicalScope, z: Symbol, zType: Type)(cont: CanonicalType => Unit): Unit = zType match {
       case RecType(x, xType) =>
         renameToUniqueVar(x, z, xType){
           canonicalType(su, scope, z, _)(cont)
@@ -1308,7 +1605,7 @@ object Dol {
       case _ => cont(canonicalError())
     }
 
-    def canonicalFuture(f: ((CanonicalType) => Unit) => Unit) = CanonicalFuture(contFuture(f))
+    def canonicalFuture(f: (CanonicalType => Unit) => Unit) = CanonicalFuture(contFuture(f))
 
     def typeProject(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: (CanonicalType, CanonicalType) => Unit): Unit = scope.get(x) match {
       case Some(xType) =>
@@ -1327,10 +1624,10 @@ object Dol {
         cont(canonicalError(), canonicalError())
     }
 
-    def typeProjectUpper(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: (CanonicalType) => Unit): Unit = {
+    def typeProjectUpper(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: CanonicalType => Unit): Unit = {
       typeProject(scope, x, a){(_, aUpperType) => cont(aUpperType)}
     }
-    def typeProjectLower(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: (CanonicalType) => Unit): Unit = {
+    def typeProjectLower(scope: CanonicalScope, x: Symbol, a: Symbol)(cont: CanonicalType => Unit): Unit = {
       typeProject(scope, x, a){(aLowerType, _) => cont(aLowerType)}
     }
 
@@ -1381,7 +1678,7 @@ object Dol {
     }
 
 
-    def canonicalRaise(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: (CanonicalType) => Unit): Unit = {
+    def canonicalRaise(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: CanonicalType => Unit): Unit = {
       //expandCanonicalTypeFutures(t){t =>
       //  expandCanonicalTypeFutures(p){p =>
       //    //println(s"canonicalRaise($scope, $t, $p)")
@@ -1395,7 +1692,7 @@ object Dol {
       //}
     }
 
-    def canonicalRaise2(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: (CanonicalType) => Unit): Unit = (t, p) match {
+    def canonicalRaise2(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: CanonicalType => Unit): Unit = (t, p) match {
       case (t @ CanonicalObjType(x, xFields, xTypes, xProjs), p @ CanonicalObjType(y, yFields, yTypes, yProjs)) =>
         val z = symbolUniverse.newSymbol()
         val zCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
@@ -1484,7 +1781,7 @@ object Dol {
         cont(canonicalError())
     }
 
-    def canonicalLower(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: (CanonicalType) => Unit): Unit = (t, p) match {
+    def canonicalLower(scope: CanonicalScope, t: CanonicalType, p: CanonicalType)(cont: CanonicalType => Unit): Unit = (t, p) match {
       case (t @ CanonicalObjType(x, xFields, xTypes, xProjs), p @ CanonicalObjType(y, yFields, yTypes, yProjs)) =>
         val z = symbolUniverse.newSymbol()
         val zCompleter = newCellCompleter(pool, Lattice.trivial[CanonicalType])
@@ -1589,7 +1886,7 @@ object Dol {
         cont(canonicalError())
     }
 
-    def expandCanonicalTypeFutures(t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
+    def expandCanonicalTypeFutures(t: CanonicalType)(cont: CanonicalType => Unit): Unit = t match {
       case CanonicalObjType(z, fields, types, projs) =>
         val fieldConts = fields.map{case (a, aType) =>
           {(c: (Map[Symbol, CanonicalType]) => Unit) =>
@@ -1626,7 +1923,7 @@ object Dol {
         cont(t)
     }
 
-    def expandCanonicalFutureOnce(t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
+    def expandCanonicalFutureOnce(t: CanonicalType)(cont: CanonicalType => Unit): Unit = t match {
       case CanonicalFuture(cell) =>
         onComplete(cell) {
           expandCanonicalFutureOnce(_)(cont)
@@ -1734,7 +2031,7 @@ object Dol {
     }
 
 
-    def canonicalGreatestCommonSubtype(scope: CanonicalScope, firstType: CanonicalType, secondType: CanonicalType)(cont: (CanonicalType) => Unit): Unit = (firstType, secondType) match {
+    def canonicalGreatestCommonSubtype(scope: CanonicalScope, firstType: CanonicalType, secondType: CanonicalType)(cont: CanonicalType => Unit): Unit = (firstType, secondType) match {
       case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x != y || scope.contains(x) =>
         val z = symbolUniverse.newSymbol()
         canonicalRenameToUniqueVar(x, z, CanonicalObjType(z, xFields, xTypes, xProjs)) {left =>
@@ -1796,7 +2093,7 @@ object Dol {
         }
     }
 
-    def canonicalLeastCommonSupertype(scope: CanonicalScope, firstType: CanonicalType, secondType: CanonicalType)(cont: (CanonicalType) => Unit): Unit = (firstType, secondType) match {
+    def canonicalLeastCommonSupertype(scope: CanonicalScope, firstType: CanonicalType, secondType: CanonicalType)(cont: CanonicalType => Unit): Unit = (firstType, secondType) match {
       case (CanonicalObjType(x, xFields, xTypes, xProjs), CanonicalObjType(y, yFields, yTypes, yProjs)) if x != y || scope.contains(x) =>
         val z = symbolUniverse.newSymbol()
         canonicalRenameToUniqueVar(x, z, CanonicalObjType(z, xFields, xTypes, xProjs)) {left =>
@@ -2077,7 +2374,7 @@ object Dol {
 //        cont(t)
 //    }
 
-    def canonicalRenameToUniqueVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
+    def canonicalRenameToUniqueVar(fromVar: Symbol, toVar: Symbol, t: CanonicalType)(cont: CanonicalType => Unit): Unit = t match {
       //case CanonicalObjType(x, fields, types, projs) if x == fromVar =>
       //  // TODO this shouldn't happen if we did alpha-rename properly?
       //  println(s"fromVar=$fromVar, toVar=$toVar, t=$t")
@@ -2159,7 +2456,7 @@ object Dol {
     // TODO will raiseTo(..., classA, classA) when classA is partially lazy lead to problems?
 
     // TODO replace killScope:Scope with killSet:Set[Symbol]?
-    def eliminateScopeUp(scope: CanonicalScope, killScope: CanonicalScope, t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
+    def eliminateScopeUp(scope: CanonicalScope, killScope: CanonicalScope, t: CanonicalType)(cont: CanonicalType => Unit): Unit = t match {
       case CanonicalObjType(x, xFields, xTypes, xProjs) =>
         val localKillScope = killScope - x
         val localScope = scope + (x -> t)
@@ -2207,7 +2504,7 @@ object Dol {
         cont(t)
     }
 
-    def eliminateScopeDown(scope: CanonicalScope, killScope: CanonicalScope, t: CanonicalType)(cont: (CanonicalType) => Unit): Unit = t match {
+    def eliminateScopeDown(scope: CanonicalScope, killScope: CanonicalScope, t: CanonicalType)(cont: CanonicalType => Unit): Unit = t match {
       case CanonicalObjType(x, xFields, xTypes, xProjs) =>
         val localKillScope = killScope - x
         val localScope = scope + (x -> t)
@@ -2290,7 +2587,7 @@ object Dol {
     def termFuture(f: ((Term) => Unit) => Unit) = this.TermFuture(contFuture(f))
     def defFuture(f: ((Def) => Unit) => Unit) = this.DefFuture(contFuture(f))
 
-//    class CanonicalLazyFuture(atom: AtomicReference[CanonicalFuture], putter: ((CanonicalType) => Unit) => Unit) extends CanonicalPrototype {
+//    class CanonicalLazyFuture(atom: AtomicReference[CanonicalFuture], putter: (CanonicalType => Unit) => Unit) extends CanonicalPrototype {
 //      val treeHeight = 2
 //      val totNumNodes = 2
 //
