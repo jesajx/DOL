@@ -1,5 +1,7 @@
 import Dependencies._
 
+enablePlugins(JmhPlugin)
+
 lazy val root = (project in file(".")).
   settings(
     name         := "exjobb",
