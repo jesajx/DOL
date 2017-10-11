@@ -233,6 +233,12 @@ object Dol {
     val totNumNodes = 1 + aLowerType.treeHeight + aUpperType.treeHeight
   }
 
+  sealed trait Variance
+  case object Covariant extends Variance
+  case object Contravariant extends Variance
+  case object Invariant extends Variance
+  case object ConstantVariance extends Variance
+
   type TypedTerm = Term // TODO Do something a bit more special here? Only serves as documentation right now.
   //sealed trait Typed { // TODO maybe something like this?
   //  val assignedType: Type
@@ -574,8 +580,8 @@ object Dol {
 //        // it necessary to do one call to raise at the end using the whole
 //        // prototype?
 //        val loweredXType = lower(scope, xType, argPrototype)
-//        val localScope = scope + (x -> loweredXType) // TODO is this correct? what happens if loweredXType is Bot? special case that?
-//        val typedResTerm = typecheckTerm(resTerm, resPrototype, scope + (x -> xType))
+//        val localScope = scope + (x -> xType) // TODO xType vs loweredXType? what happens if loweredXType is Bot? special case that?
+//        val typedResTerm = typecheckTerm(resTerm, resPrototype, localScope)
 //        val resType = typedResTerm.assignedType.get
 //        Fun(x, raisedXType, typedResTerm).withType(FunType(x, loweredXType, resType))
 //      case (Obj(x, xType, defs), p) =>
