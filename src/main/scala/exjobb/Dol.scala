@@ -268,7 +268,7 @@ object Dol {
 
   object NoFuture {
 
-    // With x: T, T <: {a = L..U}, return U. Return None on error (e.g. if not
+    // With x: T, T <: {a : L..U}, return U. Return None on error (e.g. if not
     // T <: {a = L..U} or if x is not in scope). If there are multiple
     // declarations of "a", return the intersection (AndType) of their upper
     // bounds.
@@ -280,8 +280,8 @@ object Dol {
       def inner(scope: Scope, x: Symbol, a: Symbol, visited: Set[TypeProj]): Option[Type] = scope.get(x) match {
         case Some(RecType(y, yType)) =>
           for {
-            yaUpper <- inner(scope + (y -> yType), y, a, visited)
-          } yield typeRenameVar(y, x, yaUpper)
+            yAUpperType <- inner(scope + (y -> yType), y, a, visited)
+          } yield typeRenameVar(y, x, yAUpperType)
         case Some(AndType(left, right)) =>
           val z = su.newSymbol()
           val leftUpperOption = inner(scope + (z -> left), x, a, visited)
@@ -309,6 +309,39 @@ object Dol {
     }
 
     def typeProjectLower(su: SymbolUniverse, scope: Scope, x: Symbol, a: Symbol): Option[Type] = ???
+
+    def select(su: SymbolUniverse, scope: Scope, x: Symbol, a: Symbol): Option[Type] = {
+      ??? // TODO
+//      def inner(scope: Scope, x: Symbol, a: Symbol, visited: Set[TypeProj]): Option[Type] = scope.get(x) match {
+//        case Some(RecType(y, yType)) =>
+//          for {
+//            yAType <- inner(scope + (y -> yType), y, a, visited)
+//          } yield typeRenameVar(y, x, yAType)
+//        case Some(AndType(left, right)) =>
+//          val z = su.newSymbol()
+//          val leftUpperOption = inner(scope + (z -> left), x, a, visited)
+//          val rightUpperOption = inner(scope + (z -> right), x, a, visited)
+//          (leftUpperOption, rightUpperOption) match {
+//            case (Some(leftUpper), Some(rightUpper)) => Some(typeRenameVar(z, x, andType(leftUpper, rightUpper)))
+//            case (Some(leftUpper), None)             => Some(leftUpper)
+//            case (None, Some(rightUpper))            => Some(rightUpper)
+//            case (None, None)                        => None
+//          }
+//        case Some(bProj @ TypeProj(y, b)) if visited(bProj) =>
+//          None
+//        case Some(bProj @ TypeProj(y, b)) if !visited(bProj) =>
+//          for {
+//            bUpperType <- inner(scope, y, b, visited + bProj)
+//            z <- Some(su.newSymbol())
+//            aUpperType <- inner(scope + (z -> bUpperType), z, a, visited + bProj)
+//          } yield typeRenameVar(z, x, aUpperType)
+//        case Some(TypeDecl(b, _, bUpperType)) if a == b => Some(bUpperType)
+//        case Some(Bot) => ??? // TODO <: TypeDecl(a, x.a..x.a)? the upper bound is Top?
+//        case Some(_) => None
+//        case None => ???; Some(ErrorType)
+//      }
+//      inner(scope, x, a, Set(TypeProj(x, a)))
+    }
 
     def minType(scope: Scope, left: Type, right: Type): Option[Type] = ??? // Some(left) if left <: right else Some(right) if right <: left else None
 

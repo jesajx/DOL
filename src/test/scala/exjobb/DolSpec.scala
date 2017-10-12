@@ -3,6 +3,7 @@ package exjobb
 import Dol._
 
 import scala.annotation.tailrec
+import scala.util.control.NonFatal
 import org.scalacheck.Properties
 import org.scalacheck.Prop
 import org.scalacheck.Prop.BooleanOperators
@@ -14,8 +15,8 @@ import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
 
 object DolSpec extends Properties("DolSpec") {
-  val genTop = const(Top)
-  val genBot = const(Bot)
+
+  // TODO genScope?
 
   def genFunType(su: SymbolUniverse, scope: Scope): Gen[Type] = Gen.sized{ size =>
     if (size < 3)
@@ -224,10 +225,10 @@ object DolSpec extends Properties("DolSpec") {
     if (size == 0)
       Gen.fail
     else if (size == 1)
-      oneOf(genTop, genBot)
+      oneOf(const(Top), const(Bot))
     else
-      //oneOf(genTop, genBot, genFunType(su, scope), genObjType(su, scope)) // TODO
-      oneOf(genTop, genBot, genFunType(su, scope))
+      //oneOf(const(Top), const(Bot), genFunType(su, scope), genObjType(su, scope)) // TODO
+      oneOf(const(Top), const(Bot), genFunType(su, scope))
   }
 
 //  def nextSubtype(su: SymbolUniverse, scope: Scope, tp: CanonicalType): Stream[CanonicalType] = tp match {
@@ -514,24 +515,20 @@ object DolSpec extends Properties("DolSpec") {
   def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem, isRoot: Boolean = false): Stream[InferenceProblem] = {
     var res = Stream[InferenceProblem]()
 
-//    res = res #::: (problem match {
-//      case InferenceProblem(Sel(x, a), prototype, scope, expected) =>
-//        scope.get(x) match {
-//          case Some(xType @ CanonicalObjType(y, fields, types, projs)) =>
-//            val aType = fields(a)
-//            val w = su.newSymbol()
-//            val newScope =
-//              if (scope.contains(y))
-//                scope + (w -> aType)
-//              else
-//                scope + (w -> aType) + (y -> xType) // TODO
-//            Stream(InferenceProblem(Var(w), prototype, newScope, Var(w).withType(problem.expectedType)))
-//          case _ =>
-//            Stream()
-//        }
-//      case _ => Stream()
-//    })
-//
+    res = res #::: (problem match {
+      case InferenceProblem(Sel(x, a), prototype, scope, expected) =>
+        NoFuture.select(su, scope, x, a) match {
+          case Some(aType) =>
+            val w = su.newSymbol()
+            val newScope = scope + (w -> aType)
+            Stream(InferenceProblem(Var(w), prototype, newScope, Var(w).withType(aType)))
+          case None =>
+            println(s"problem= $problem")
+            ???; Stream()
+        }
+      case _ => Stream()
+    })
+
 //    res = res #::: (problem match {
 //      case InferenceProblem(App(x, y), prototype, scope, expected) =>
 //        scope.get(x) match {
@@ -589,20 +586,20 @@ object DolSpec extends Properties("DolSpec") {
       res.map{shrinkScopeIfPossible}
   }
 
-  property("positiveSequentialInferenceProblem") = {
-    val su = new SymbolUniverse()
-    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem, isRoot=true)) { (problem: InferenceProblem) =>
-      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
-
-      val resString = res match {
-        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
-        case None => "res = None"
-      }
-
-      resString |: Prop.all(
-        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
-    }
-  }
+//  property("positiveSequentialInferenceProblem") = {
+//    val su = new SymbolUniverse()
+//    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem, isRoot=true)) { (problem: InferenceProblem) =>
+//      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
+//
+//      val resString = res match {
+//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+//        case None => "res = None"
+//      }
+//
+//      resString |: Prop.all(
+//        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
+//    }
+//  }
 
   // TODO
 //  property("positiveParallelInferenceProblem") = {
@@ -627,6 +624,21 @@ object DolSpec extends Properties("DolSpec") {
   //  // the resulting generate type has _.totNumNodes <= N
   //}
 
+//  property("shrinkDoesNotThrow") = { // TODO
+//    val su = new SymbolUniverse()
+//    val generator = genInferenceProblem(su, Map())
+//    Prop.forAllNoShrink(generator) { (problem: InferenceProblem) =>
+//      try {
+//        shrinkInferenceProblem(su, problem, isRoot=true)
+//        true
+//      } catch {
+//        case NonFatal(e) =>
+//          e.printStackTrace();
+//          false
+//      }
+//    }
+//  }
+
   property("shrinkPreservesTypecorrectness") = { // TODO
     val su = new SymbolUniverse()
     val generator: Gen[(InferenceProblem, InferenceProblem)] = for {
@@ -644,8 +656,54 @@ object DolSpec extends Properties("DolSpec") {
     }
   }
 
+  property("NoFuture.projectUpperType") = {
+    val su = new SymbolUniverse()
+    val generator: Gen[(Scope, Symbol, Symbol, Type)] = for {
+      x <- const(su.newSymbol())
+      a <- const(su.newSymbol())
+      aType <- genType(su, Map()) // TODO populate scope?
+      scope <- const(Map(x -> TypeDecl(a, Bot, aType)))
+    } yield (scope, x, a, aType)
+    // TODO test multiple declarations (should result in AndType)
+    Prop.forAllNoShrink(generator) {case (scope, x, a, aType) =>
+      val res = NoFuture.typeProjectUpper(su, scope, x, a)
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(su, res.get, aType))
+    }
+  }
+
   // TODO check utility-functions. raise, lower, glb, lub, etc.
 
   // TODO check eliminateVarUp by starting with a type with no vars, and then
   // replacing parts with vars.  scope={},Int  --> scope={x->{T=Int}},x.T
 }
+
+/*
+
+
+
+
+
+InferenceProblem(
+  Let(1,Var(3),Let(10,Let(13,Var(15),Var(13)),Let(23,Var(27),Let(30,Var(10),Sel(23,28))))),
+  Que,
+  Map(3 -> FunType(6,FunType(7,Top,Top),FunType(8,Top,Bot)), 15 -> FunType(18,Bot,Bot), 27 -> FieldDecl(28,Top)),
+  Let(1, Var(3).withType(FunType(6,FunType(7,Top,Top),FunType(8,Top,Bot))), Let(10, Let(13, Var(15).withType(FunType(18,Bot,Bot)), Var(13).withType(FunType(18,Bot,Bot))).withType(FunType(18,Bot,Bot)), Let(23, Var(27).withType(FieldDecl(28,Top)), Let(30, Var(10).withType(FunType(18,Bot,Bot)), Sel(23,28).withType(Top)).withType(Top)).withType(Top)).withType(Top)).withType(Top))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+*/
