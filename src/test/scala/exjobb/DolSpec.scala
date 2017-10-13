@@ -16,7 +16,39 @@ import org.scalacheck.Shrink
 
 object DolSpec extends Properties("DolSpec") {
 
-  // TODO genScope?
+
+  // TODO Maybe just define generators like normal function and let caller
+  // wrap in Gen as necessary? The problem is distributing the randomseed
+  // manually...
+
+  def genScope(su: SymbolUniverse): Gen[Scope] = const(Map()) // TODO
+
+  // TODO should some of these be Cogen rather then Gen?
+
+  def genLowerPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
+    case FunType(x, xType, resType) =>
+      oneOf(
+        const(typ),
+        const(Que),
+        for {
+          xPrototype <- genUpperPrototypeFromType(su, scope, xType)
+          resPrototype <- genLowerPrototypeFromType(su, scope, resType)
+        } yield FunType(x, xPrototype, resPrototype))
+    case _ => oneOf(const(Que), const(typ))
+  }
+  def genUpperPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
+    // TODO obj-types probably need special handling...
+    case FunType(x, xType, resType) =>
+      oneOf(
+        const(typ),
+        const(Que),
+        for {
+          xPrototype <- genLowerPrototypeFromType(su, scope, xType)
+          resPrototype <- genUpperPrototypeFromType(su, scope, resType)
+        } yield FunType(x, xPrototype, resPrototype))
+    case _ => oneOf(const(Que), const(typ))
+  }
+
 
   def genFunType(su: SymbolUniverse, scope: Scope): Gen[Type] = Gen.sized{ size =>
     if (size < 3)
@@ -292,7 +324,7 @@ object DolSpec extends Properties("DolSpec") {
     override def toString() = {
       s"InferenceProblem($term, $prototype, $scope, ${NoFuture.stringExprWithTypeIfExists(expected)})"
     }
-    def expectedType = expected.assignedType.get
+    def expectedType = expected.assignedType
   }
 
   def genVarInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = {
@@ -413,35 +445,55 @@ object DolSpec extends Properties("DolSpec") {
 //    } yield InferenceProblem(Obj(x, xType, defs), Que, newScope - x, Obj(x, xType, typedDefs).withType(xCanonicalType))
 //  }
 //
-//  def genAppInferenceProblemFromArg(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = for {
-//    f <- const(su.newSymbol())
-//    x <- const(su.newSymbol())
-//    y <- const(su.newSymbol())
-//    arg <- genInferenceProblem(su, scope)
-//    argSuper <- genCanonicalSupertype(su, scope, arg.expectedType)
-//    res <- genInferenceProblem(su, scope + (x -> argSuper))
-//    resType <- const(res.expectedType)
-//  } yield InferenceProblem(
-//    Let(f, Fun(x, NoFuture.decanonicalize(argSuper), res.term), Let(y, arg.term, App(f, y))),
-//    res.prototype,
-//    (arg.scope ++ res.scope) - x - f - y,
-//    Let(f,
-//      Fun(x, NoFuture.decanonicalize(argSuper), res.expected).withType(CanonicalFunType(x, argSuper, resType, Set())),
-//      Let(y, arg.expected, App(f, y).withType(resType)).withType(resType)
-//      ).withType(resType))
-//
-//  def genFunInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = for {
-//    x <- const(su.newSymbol)
-//    xCanonicalType <- genCanonicalType(su, scope) // TODO decanonicalize?
-//    body <- genInferenceProblem(su, scope + (x -> xCanonicalType))
-//    prototype <- const(if (body.prototype == Que) Que else CanonicalFunType(x, Que, body.prototype, Set()))
-//  } yield InferenceProblem(
-//    Fun(x, NoFuture.decanonicalize(xCanonicalType), body.term),
-//    prototype,
-//    body.scope - x,
-//    Fun(x, NoFuture.decanonicalize(xCanonicalType), body.expected).
-//      withType(CanonicalFunType(x, xCanonicalType, body.expectedType, Set())))
-//
+
+  // TODO genInferenceProblemFromType: Modify genInferenceProblem to take a prototype and use fixed-point
+  // to eliminate the prototype?
+
+  def genAppInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = {
+    val genFromArg = for { // TODO better to add fun to scope?
+      f <- const(su.newSymbol())
+      x <- const(su.newSymbol())
+      y <- const(su.newSymbol())
+      arg <- genInferenceProblem(su, scope)
+      argSupertype <- genSupertype(su, scope, arg.expectedType, Set())
+      res <- genInferenceProblem(su, scope + (x -> argSupertype))
+      resType <- const(res.expectedType)
+    } yield InferenceProblem(
+      Let(f, Fun(x, argSupertype, res.term), Let(y, arg.term, App(f, y))),
+      res.prototype,
+      (arg.scope ++ res.scope) - x - f - y,
+      Let(f,
+        Fun(x, argSupertype, res.expected).withType(FunType(x, argSupertype, resType)),
+        Let(y, arg.expected, App(f, y).withType(resType)).withType(resType)
+        ).withType(resType))
+
+    var funsInScope = scope.filter{
+      case (_, _: FunType) => true
+      case _ => false
+    }
+
+    if (funsInScope.size == 0) {
+      genFromArg
+    } else {
+      val genFromScope = for {
+        (f, FunType(x, xType, xResType)) <- oneOf(funsInScope.toSeq)
+        y <- const(su.newSymbol()) // TODO vs picking y from scope?
+        yType <- genSubtype(su, scope, xType, Set())
+        appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
+      } yield InferenceProblem(App(f, y), Que, scope + (y -> yType), App(f, y).withType(appResType))
+      oneOf(genFromArg, genFromScope)
+    }
+  }
+
+    // TODO also: genAppInferenceProblemFromScope
+
+  def genFunInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = for {
+    x         <- const(su.newSymbol)
+    xType     <- genType(su, scope)
+    body      <- genInferenceProblem(su, scope + (x -> xType))
+    prototype <- const(if (body.prototype == Que) Que else FunType(x, Que, body.prototype))
+  } yield InferenceProblem(Fun(x, xType, body.term), prototype, body.scope - x, Fun(x, xType, body.expected).withType(FunType(x, xType, body.expectedType)))
+
 //  def genFixedPointInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = for { // TODO use LightweightApp instead.
 //    f <- const(su.newSymbol)
 //    x <- const(su.newSymbol)
@@ -459,15 +511,15 @@ object DolSpec extends Properties("DolSpec") {
   def genInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = oneOf(
     genVarInferenceProblem(su, scope),
     genLetInferenceProblem(su, scope),
-    genSelInferenceProblem(su, scope)//,
+    genSelInferenceProblem(su, scope),
+    genFunInferenceProblem(su, scope),
+    genAppInferenceProblem(su, scope)//,
     //genObjInferenceProblem(su, scope),
-    //genFunInferenceProblem(su, scope),
-    //genFixedPointInferenceProblem(su, scope),
-    //genAppInferenceProblemFromArg(su, scope)
+    //genFixedPointInferenceProblem(su, scope)
   )
 
   def isTermFullyTyped(term: Term): Boolean = {
-    if (term.assignedType == None) {
+    if (term.assignedTypeOption == None) {
       return false
     }
     term match {
@@ -515,6 +567,8 @@ object DolSpec extends Properties("DolSpec") {
   def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem, isRoot: Boolean = false): Stream[InferenceProblem] = {
     var res = Stream[InferenceProblem]()
 
+    // TODO use flatMap to make lazystreams?
+
     res = res #::: (problem match {
       case InferenceProblem(Sel(x, a), prototype, scope, expected) =>
         NoFuture.select(su, scope, x, a) match {
@@ -543,7 +597,7 @@ object DolSpec extends Properties("DolSpec") {
     res = res #::: (problem match {
       case InferenceProblem(Let(x, xTerm, resTerm), prototype, scope, expected @ Let(_, expectedXTerm, expectedResTerm)) =>
         val xProblem = InferenceProblem(xTerm, Que, scope, expectedXTerm)
-        val resProblem = InferenceProblem(resTerm, prototype, scope + (x -> expectedXTerm.assignedType.get), expectedResTerm)
+        val resProblem = InferenceProblem(resTerm, prototype, scope + (x -> expectedXTerm.assignedType), expectedResTerm)
 
         val expectedType = problem.expectedType
 
@@ -562,44 +616,55 @@ object DolSpec extends Properties("DolSpec") {
         }
       case _ => Stream()
     })
-//    res = res #::: (problem match {
-//      case InferenceProblem(Fun(x, xType, resTerm), prototype, scope, expected @ Fun(_, _, expectedResTerm)) =>
-//
-//        val resPrototype = Que // TODO base on prototype
-//        val resProblem = InferenceProblem(resTerm, resPrototype, scope + (x -> NoFuture.canonicalize(su, scope, x, xType)), expectedResTerm)
-//        val resShrinks = for {
-//          newResProblem <- shrinkInferenceProblem(su, resProblem)
-//        } yield InferenceProblem(Fun(x, xType, newResProblem.term), prototype, scope ++ newResProblem.scope, Fun(x, xType, newResProblem.expected).withType(problem.expectedType)) // TODO do something with prototype
-//
-//        if (isRoot)
-//          resProblem #:: resShrinks
-//        else
-//          resShrinks
-//      case _ => Stream()
-//    })
+    res = res #::: (problem match {
+      case InferenceProblem(Fun(x, xType, resTerm), prototype, scope, expected @ Fun(_, _, expectedResTerm)) =>
+
+        val resPrototype = Que // TODO base on prototype
+        val resProblem = InferenceProblem(resTerm, resPrototype, scope + (x -> xType), expectedResTerm)
+        val resShrinks = for {
+          // TODO shrink xType somehow? replace with sub-/supertype?
+          newResProblem <- shrinkInferenceProblem(su, resProblem)
+        } yield InferenceProblem(Fun(x, xType, newResProblem.term), prototype, scope ++ newResProblem.scope, Fun(x, xType, newResProblem.expected).withType(problem.expectedType)) // TODO do something with prototype
+
+        if (isRoot)
+          resProblem #:: resShrinks
+        else
+          resShrinks
+      case _ => Stream()
+    })
     // TODO remove function if root?
     // TODO replace typ with subtype that does not reference x.
     // TODO remove stuff in scope that are not referenced.
-    if (res.size == 0)
-      shrinkScope(problem)
-    else
-      res.map{shrinkScopeIfPossible}
+    //if (res.size == 0)
+    //  shrinkScope(problem)
+    //else
+    res.map{shrinkScopeIfPossible}
   }
 
-//  property("positiveSequentialInferenceProblem") = {
-//    val su = new SymbolUniverse()
-//    Prop.forAllShrink(genInferenceProblem(su, Map()), shrinkInferenceProblem(su, _: InferenceProblem, isRoot=true)) { (problem: InferenceProblem) =>
-//      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
-//
-//      val resString = res match {
-//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
-//        case None => "res = None"
-//      }
-//
-//      resString |: Prop.all(
-//        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
-//    }
-//  }
+  // TODO include SymbolUniverse as field in InferenceProblem?
+  val genSUAndInferenceProblem: Gen[(SymbolUniverse, InferenceProblem)] = for{
+    su <- Gen.sized(_ => new SymbolUniverse())
+    scope <- const(Map(): Scope) // TODO genScope?
+    problem <- genInferenceProblem(su, scope)
+  } yield (su, problem)
+  def shrinkSUAndInferenceProblem(tuple: (SymbolUniverse, InferenceProblem)): Stream[(SymbolUniverse, InferenceProblem)] = {
+    val (su, problem) = tuple
+    shrinkInferenceProblem(su, problem, isRoot=true).map{newProblem => (su, newProblem)}
+  }
+
+  property("positiveSequentialInferenceProblem") = {
+    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem) { case (su, problem) =>
+      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
+
+      val resString = res match {
+        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+        case None => "res = None"
+      }
+
+      resString |: Prop.all(
+        res != None && NoFuture.equalTerms(problem.scope, res.get, problem.expected))
+    }
+  }
 
   // TODO
 //  property("positiveParallelInferenceProblem") = {
@@ -624,25 +689,25 @@ object DolSpec extends Properties("DolSpec") {
   //  // the resulting generate type has _.totNumNodes <= N
   //}
 
-//  property("shrinkDoesNotThrow") = { // TODO
-//    val su = new SymbolUniverse()
-//    val generator = genInferenceProblem(su, Map())
-//    Prop.forAllNoShrink(generator) { (problem: InferenceProblem) =>
-//      try {
-//        shrinkInferenceProblem(su, problem, isRoot=true)
-//        true
-//      } catch {
-//        case NonFatal(e) =>
-//          e.printStackTrace();
-//          false
-//      }
-//    }
-//  }
+  property("shrinkDoesNotThrow") = { // TODO
+    val su = new SymbolUniverse()
+    val generator = genInferenceProblem(su, Map())
+    Prop.forAllNoShrink(generator) { (problem: InferenceProblem) =>
+      try {
+        shrinkInferenceProblem(su, problem, isRoot=true)
+        true
+      } catch {
+        case NonFatal(e) =>
+          e.printStackTrace();
+          false
+      }
+    }
+  }
 
   property("shrinkPreservesTypecorrectness") = { // TODO
     val su = new SymbolUniverse()
     val generator: Gen[(InferenceProblem, InferenceProblem)] = for {
-      problem <- genInferenceProblem(su, Map()) //if typecheckInParallel(su, problem.term, problem.prototype, problem.scope) != None
+      problem <- genInferenceProblem(su, Map()) //if typecheckSequentially(su, problem.term, problem.prototype, problem.scope) != None
       shrunkProblems <- const(shrinkInferenceProblem(su, problem, isRoot=true)) if !shrunkProblems.isEmpty
       newProblem <- oneOf(shrunkProblems)
     } yield (problem, newProblem)
@@ -651,8 +716,8 @@ object DolSpec extends Properties("DolSpec") {
       (s"newProblem = $newProblem"
         |: s"origProblem = $origProblem"
         |: Prop.all(
-          typecheckSequentially(su, origProblem.term, origProblem.prototype, origProblem.scope) == None
-          || typecheckSequentially(su, newProblem.term, newProblem.prototype, newProblem.scope) != None))
+          (typecheckSequentially(su, origProblem.term, origProblem.prototype, origProblem.scope) != None)
+          ==> (typecheckSequentially(su, newProblem.term, newProblem.prototype, newProblem.scope) != None)))
     }
   }
 
@@ -661,13 +726,111 @@ object DolSpec extends Properties("DolSpec") {
     val generator: Gen[(Scope, Symbol, Symbol, Type)] = for {
       x <- const(su.newSymbol())
       a <- const(su.newSymbol())
-      aType <- genType(su, Map()) // TODO populate scope?
-      scope <- const(Map(x -> TypeDecl(a, Bot, aType)))
-    } yield (scope, x, a, aType)
+      aUpperType <- genType(su, Map()) // TODO populate scope?
+      aLowerType <- genSubtype(su, Map(), aUpperType, Set()) // TODO populate scope?
+      scope <- const(Map(x -> TypeDecl(a, aLowerType, aUpperType)))
+    } yield (scope, x, a, aUpperType)
     // TODO test multiple declarations (should result in AndType)
-    Prop.forAllNoShrink(generator) {case (scope, x, a, aType) =>
-      val res = NoFuture.typeProjectUpper(su, scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(su, res.get, aType))
+    Prop.forAllNoShrink(generator) {case (scope, x, a, aUpperType) =>
+      val res = NoFuture.typeProjectUpper(scope, x, a)
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(scope, res.get, aUpperType))
+    }
+  }
+
+  property("NoFuture.raise -- simply fill in gaps") = { // TODO vs testing constraintSolver directly?
+    val su = new SymbolUniverse()
+    val scope: Scope = Map()
+    val generator: Gen[(Type, Prototype)] = for {
+      typ <- genType(su, scope)
+      prototype <- genUpperPrototypeFromType(su, scope, typ)
+    } yield (typ, prototype)
+
+    Prop.forAllNoShrink(generator) {case (typ, prototype) =>
+      val res = NoFuture.raise(su, scope, typ, prototype)
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(scope, res.get, typ))
+    }
+  }
+
+  property("NoFuture.lower -- simply fill in gaps") = { // TODO vs testing constraintSolver directly?
+    val su = new SymbolUniverse()
+    val scope: Scope = Map()
+    val generator: Gen[(Type, Prototype)] = for {
+      typ <- genType(su, scope)
+      prototype <- genLowerPrototypeFromType(su, scope, typ)
+    } yield (typ, prototype)
+
+    Prop.forAllNoShrink(generator) {case (typ, prototype) =>
+      val res = NoFuture.lower(su, scope, typ, prototype)
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(scope, res.get, typ))
+    }
+  }
+
+  def withSymbolUniverse[T](f: SymbolUniverse => Gen[T]): Gen[(SymbolUniverse, T)] = for {
+    su <- const(new SymbolUniverse())
+    res <- f(su)
+  } yield (su, res)
+
+  property("NoFuture.allVarsInType") = {
+    val generator: Gen[(SymbolUniverse, Type)] = withSymbolUniverse{genType(_, Map())}
+    Prop.forAllNoShrink(generator) {case (su, typ) =>
+      val res = NoFuture.allVarsInType(typ)
+      val expected = (0 until su.count()).toSet
+      s"res = $res, expected = $expected" |: Prop.all(res == expected)
+    }
+  }
+
+  property("NoFuture.allVarsInType - boundVarsInType == freeVarsInType") = {
+    val generator: Gen[(SymbolUniverse, Type)] = withSymbolUniverse{genType(_, Map())}
+    Prop.forAllNoShrink(generator) {case (su, typ) =>
+      val expected = (0 until su.count()).toSet
+      val allVars = NoFuture.allVarsInType(typ)
+      val boundVars = NoFuture.boundVarsInType(typ)
+      val freeVars = NoFuture.freeVarsInType(typ)
+
+      s"expected = $expected, allVars = $allVars, boundVars = $boundVars, freeVars = $freeVars" |: Prop.all(
+        allVars == expected,
+        boundVars.intersect(freeVars) == Set(),
+        allVars -- boundVars == freeVars
+      )
+    }
+  }
+
+  property("NoFuture.isSubtypeOf") = {
+    val generator: Gen[(Scope, Type, Type)] = for {
+      su <- const(new SymbolUniverse())
+      scope <- genScope(su)
+      lower <- genType(su, scope)
+      upper <- genSupertype(su, scope, lower, Set())
+    } yield (scope, lower, upper)
+    Prop.forAllNoShrink(generator) { case (scope, lower, upper) =>
+      NoFuture.isSubtypeOf(scope, lower, upper)
+    }
+  }
+
+  // TODO to be more FP-pure, symboluniverse should probably be wrapped
+  // together with other stuff in a monad...
+
+  property("NoFuture.typeRenameVar") = {
+    val generator: Gen[(SymbolUniverse, Symbol, Symbol, Type)] = for {
+      su <- const(new SymbolUniverse())
+      typ <- genType(su, Map())
+      x <- Gen.oneOf((NoFuture.freeVarsInType(typ) + su.newSymbol()).toSeq) // NOTE: x != y. Had to check scalacheck src to know that....
+      y <- Gen.oneOf(((NoFuture.freeVarsInType(typ) + x) + su.newSymbol()).toSeq)
+    } yield (su, x, y, typ)
+    // TODO shrink type?
+    Prop.forAllNoShrink(generator) { case (su, x, y, typ) =>
+      val freeBefore = NoFuture.freeVarsInType(typ)
+      val res = NoFuture.typeRenameVar(x, y, typ)
+      val freeMiddle = NoFuture.freeVarsInType(res)
+      val res2 = NoFuture.typeRenameVar(y, x, res)
+      val freeAfter = NoFuture.freeVarsInType(res2)
+
+      Prop.all(
+        !(x != y && freeBefore(x)) || (!freeMiddle(x) && freeMiddle(y)),
+        !(x != y && freeMiddle(y)) || (!freeAfter(y) && freeAfter(x)),
+        !(x != y && freeBefore(x) && !freeBefore(y)) || (typ == res2),
+        !(x == y) || (typ == res && res == res2)
+      )
     }
   }
 
@@ -678,32 +841,4 @@ object DolSpec extends Properties("DolSpec") {
 }
 
 /*
-
-
-
-
-
-InferenceProblem(
-  Let(1,Var(3),Let(10,Let(13,Var(15),Var(13)),Let(23,Var(27),Let(30,Var(10),Sel(23,28))))),
-  Que,
-  Map(3 -> FunType(6,FunType(7,Top,Top),FunType(8,Top,Bot)), 15 -> FunType(18,Bot,Bot), 27 -> FieldDecl(28,Top)),
-  Let(1, Var(3).withType(FunType(6,FunType(7,Top,Top),FunType(8,Top,Bot))), Let(10, Let(13, Var(15).withType(FunType(18,Bot,Bot)), Var(13).withType(FunType(18,Bot,Bot))).withType(FunType(18,Bot,Bot)), Let(23, Var(27).withType(FieldDecl(28,Top)), Let(30, Var(10).withType(FunType(18,Bot,Bot)), Sel(23,28).withType(Top)).withType(Top)).withType(Top)).withType(Top)).withType(Top))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 */
