@@ -431,7 +431,7 @@ object Dol {
           inner(scope, lhs, bLowerType, visitedLeft, visitedRight + bProj)
 
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
-          inner(scope, lhs, typeRenameBoundVar(x, rhs), visitedLeft, visitedRight)
+          inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight)
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
           val argType = andType(xType, yType)
           val resType = inner(scope + (x -> argType), xResType, yResType, visitedLeft, visitedRight)
@@ -696,51 +696,51 @@ object Dol {
     }
 
 
-    def eliminateVarUp(su: SymbolUniverse, scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
+    def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
       case aProj @ TypeProj(x, a) if x == z =>
         val aUpperType = typeProjectUpper(scope, x, a).getOrElse{???; ErrorType}
-        eliminateVarUp(su, scope, z, aUpperType, visited + aProj)
+        eliminateVarUp(scope, z, aUpperType, visited + aProj)
       case TypeProj(x, a) if x != z =>
         typ
       case AndType(left, right) =>
-        AndType(eliminateVarUp(su, scope, z, left, visited), eliminateVarUp(su, scope, z, right, visited))
+        AndType(eliminateVarUp(scope, z, left, visited), eliminateVarUp(scope, z, right, visited))
       case FunType(x, xType, xResType) if x != z =>
-        val newXType = eliminateVarDown(su, scope, z, xType, visited)
-        val newXResType = eliminateVarUp(su, scope, z, xResType, visited)
+        val newXType = eliminateVarDown(scope, z, xType, visited)
+        val newXResType = eliminateVarUp(scope, z, xResType, visited)
         FunType(x, newXType, newXResType)
       case RecType(x, xType) if x != z =>
-        RecType(z, eliminateVarUp(su, scope, z, xType, visited))
+        RecType(z, eliminateVarUp(scope, z, xType, visited))
       case FieldDecl(a, aType) =>
-        FieldDecl(a, eliminateVarUp(su, scope, z, aType, visited))
+        FieldDecl(a, eliminateVarUp(scope, z, aType, visited))
       case TypeDecl(a, aLowerType, aUpperType) =>
-        val newALowerType = eliminateVarDown(su, scope, z, aLowerType, visited)
-        val newAUpperType = eliminateVarUp(su, scope, z, aUpperType, visited)
+        val newALowerType = eliminateVarDown(scope, z, aLowerType, visited)
+        val newAUpperType = eliminateVarUp(scope, z, aUpperType, visited)
         TypeDecl(a, newALowerType, newAUpperType)
       case _ => typ // Bot, Top, Que, ErrorType
     }
 
-    def eliminateVarDown(su: SymbolUniverse, scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
+    def eliminateVarDown(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
         case aProj @ TypeProj(x, a) if x == z =>
           val aLowerType = typeProjectLower(scope, x, a).getOrElse{???; ErrorType}
-          eliminateVarDown(su, scope, z, aLowerType, visited + aProj)
+          eliminateVarDown(scope, z, aLowerType, visited + aProj)
         case TypeProj(x, a) if x != z =>
           typ
         case AndType(left, right) =>
-          AndType(eliminateVarDown(su, scope, z, left, visited), eliminateVarDown(su, scope, z, right, visited))
+          AndType(eliminateVarDown(scope, z, left, visited), eliminateVarDown(scope, z, right, visited))
         case FunType(x, xType, xResType) if x != z =>
           // TODO Is this correct? Can we end up deleting decls in xType that xResType needs?
-          val newXType = eliminateVarUp(su, scope, z, xType, visited)
-          val newXResType = eliminateVarDown(su, scope, z, xResType, visited)
+          val newXType = eliminateVarUp(scope, z, xType, visited)
+          val newXResType = eliminateVarDown(scope, z, xResType, visited)
           FunType(x, newXType, newXResType)
         case RecType(x, xType) if x != z =>
-          RecType(z, eliminateVarDown(su, scope, z, xType, visited))
+          RecType(z, eliminateVarDown(scope, z, xType, visited))
         case FieldDecl(a, aType) =>
-          FieldDecl(a, eliminateVarDown(su, scope, z, aType, visited))
+          FieldDecl(a, eliminateVarDown(scope, z, aType, visited))
         case TypeDecl(a, aLowerType, aUpperType) =>
           // TODO Can we end up narrowing too much so that no longer
           // lower <: upper?
-          val newALowerType = eliminateVarUp(su, scope, z, aLowerType, visited)
-          val newAUpperType = eliminateVarDown(su, scope, z, aUpperType, visited)
+          val newALowerType = eliminateVarUp(scope, z, aLowerType, visited)
+          val newAUpperType = eliminateVarDown(scope, z, aUpperType, visited)
           TypeDecl(a, newALowerType, newAUpperType)
         case _ => typ // Bot, Top, Que, ErrorType
     }
@@ -765,7 +765,7 @@ object Dol {
         val typedXTerm = typecheckTerm(su, xTerm, Que, scope)
         val xType = typedXTerm.assignedTypeOption.get // TODO Annoying, choose some typesafe way to do this instead...
         val typedResTerm = typecheckTerm(su, resTerm, p, scope + (x -> xType))
-        Let(x, typedXTerm, typedResTerm).withType(eliminateVarUp(su, scope, x, typedResTerm.assignedType, Set()))
+        Let(x, typedXTerm, typedResTerm).withType(eliminateVarUp(scope, x, typedResTerm.assignedType, Set()))
       case (Sel(x, a), p) =>
         term.withType {
           typecheckTerm(su, Var(x), FieldDecl(a, p), scope).assignedType match {
@@ -795,9 +795,9 @@ object Dol {
       case (Fun(x, _, _), Top) =>
         typecheckTerm(su, term, FunType(x, Bot, Top), scope)
       case (Fun(x, _, _), FunType(y, _, _)) if x != y =>
-        val typedTerm = typecheckTerm(su, term, typeRenameBoundVar(x, prototype), scope)
+        val typedTerm = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope)
         val typ = typedTerm.assignedType
-        typedTerm.withType(typeRenameBoundVar(y, typ))
+        typedTerm.withType(typeRenameBoundVarAssumingNonFree(y, typ))
       case (Fun(x, xType, resTerm), FunType(y, argPrototype, resPrototype)) if x == y =>
         // TODO Is it fine to do lower/raise of arg and res separately? Or is
         // it necessary to do one call to raise at the end using the whole
@@ -877,19 +877,25 @@ object Dol {
         typ
     }
 
-    def typeRenameBoundVar(toVar: Symbol, typ: Type): Type = typ match {
-      case RecType(x, xType) if x != toVar =>
-        RecType(toVar, typeRenameVar(x, toVar, xType))
-      case FunType(x, xType, resType) if x != toVar =>
-        FunType(toVar, xType, typeRenameVar(x, toVar, resType))
-      case _ =>
-        typ
+    def typeRenameBoundVarAssumingNonFree(toVar: Symbol, typ: Type): Type = {
+      if (isVarFreeIn(toVar, typ)) ???
+      typ match {
+        case RecType(x, xType) if x != toVar =>
+          RecType(toVar, typeRenameVar(x, toVar, xType))
+        case FunType(x, xType, resType) if x != toVar =>
+          FunType(toVar, xType, typeRenameVar(x, toVar, resType))
+        case _ =>
+          typ
+      }
     }
-    def termRenameBoundVar(toVar: Symbol, term: Term): Term = term match {
-      case Let(x, xTerm, resTerm) if x != toVar => termRenameVar(x, toVar, Let(toVar, xTerm, resTerm))
-      case Obj(x, xType, d)       if x != toVar => termRenameVar(x, toVar, Obj(toVar, xType, d))
-      case Fun(x, xType, resTerm) if x != toVar => termRenameVar(x, toVar, Fun(toVar, xType, resTerm))
-      case _ => term
+    def termRenameBoundVarAssumingNonFree(toVar: Symbol, term: Term): Term ={
+      if (isVarFreeIn(toVar, term)) ???
+      term match {
+        case Let(x, xTerm, resTerm) if x != toVar => termRenameVar(x, toVar, Let(toVar, xTerm, resTerm))
+        case Obj(x, xType, d)       if x != toVar => termRenameVar(x, toVar, Obj(toVar, xType, d))
+        case Fun(x, xType, resTerm) if x != toVar => termRenameVar(x, toVar, Fun(toVar, xType, resTerm))
+        case _ => term
+      }
     }
 
     def defRenameVar(fromVar: Symbol, toVar: Symbol, d: Def): Def = d match {
@@ -1003,11 +1009,11 @@ object Dol {
           (equalTypes(scope, xType, yType)
             && equalTerms(scope, xBody, yBody))
         case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x != y =>
-          equalTerms(scope, first, NoFuture.termRenameBoundVar(x, second))
+          equalTerms(scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
         case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x != y =>
-          equalTerms(scope, first, NoFuture.termRenameBoundVar(x, second))
+          equalTerms(scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
         case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x != y =>
-          equalTerms(scope, first, NoFuture.termRenameBoundVar(x, second))
+          equalTerms(scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
         case _ =>
           false
       })
@@ -1045,7 +1051,7 @@ object Dol {
             && inner(scope, first, right, visitedLeft, visitedRight))
 
         case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
-          inner(scope, first, typeRenameBoundVar(x, second), visitedLeft, visitedRight)
+          inner(scope, first, typeRenameBoundVarAssumingNonFree(x, second), visitedLeft, visitedRight)
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
           (inner(scope, yType, xType, visitedRight, visitedLeft)
             && inner(scope, xResType, yResType, visitedLeft, visitedRight))
@@ -1200,29 +1206,6 @@ object Dol {
         case None =>
           s
       }
-    }
-
-    def alphaRenameType(su: SymbolUniverse, typ: Type): Type = typ match {
-      case FunType(x, xType, resType)          => typeRenameBoundVar(su.newSymbol(), FunType(x, alphaRenameType(su, xType), alphaRenameType(su, resType)))
-      case RecType(x, xType)                   => typeRenameBoundVar(su.newSymbol(), RecType(x, alphaRenameType(su, xType)))
-      case FieldDecl(a, aType)                 => FieldDecl(a, alphaRenameType(su, aType))
-      case TypeDecl(a, aLowerType, aUpperType) => TypeDecl(a, alphaRenameType(su, aLowerType), alphaRenameType(su, aUpperType))
-      case AndType(left, right)                => andType(alphaRenameType(su, left), alphaRenameType(su, right))
-      case _ => typ
-    }
-
-    def alphaRenameDef(su: SymbolUniverse, d: Def): Def = d match {
-      case FieldDef(a, aTerm)  => FieldDef(a, alphaRenameTerm(su, aTerm))
-      case AndDef(left, right) => AndDef(alphaRenameDef(su, left), alphaRenameDef(su, right))
-      case TypeDef(a, aType)   => TypeDef(a, alphaRenameType(su, aType))
-      case _ => d
-    }
-
-    def alphaRenameTerm(su: SymbolUniverse, term: Term): Term = term match {
-      case Let(x, xTerm, resTerm) => termRenameBoundVar(su.newSymbol(), Let(x, alphaRenameTerm(su, xTerm), alphaRenameTerm(su, resTerm)))
-      case Obj(x, xType, d)       => termRenameBoundVar(su.newSymbol(), Obj(x, alphaRenameType(su, xType), alphaRenameDef(su, d)))
-      case Fun(x, xType, resTerm) => termRenameBoundVar(su.newSymbol(), Fun(x, alphaRenameType(su, xType), alphaRenameTerm(su, resTerm)))
-      case _ => term
     }
 
     def directFieldDecls(su: SymbolUniverse, scope: Scope, x: Symbol): Map[SymbolPath, Type] = {
@@ -1749,176 +1732,6 @@ object Dol {
       case _ =>
         cont(t)
     }
-
-//    def alphaRenameType(t: Type)(cont: (Type) => Unit): Unit = t match {
-//      case FutureType(cell) =>
-//        onComplete(cell){typ =>
-//          alphaRenameType(typ)(cont)
-//        }
-//      case FunType(x, xType, resType) =>
-//        alphaRenameType(xType){xType =>
-//          alphaRenameType(resType){resType =>
-//            val z = symbolUniverse.newSymbol()
-//            renameToUniqueVar(x, z, FunType(z, xType, resType))(cont)
-//          }
-//        }
-//      case RecType(x, xType) =>
-//        alphaRenameType(xType){xType =>
-//          val z = symbolUniverse.newSymbol()
-//          renameToUniqueVar(x, z, RecType(z, xType))(cont)
-//        }
-//      case FieldDecl(a, aType) =>
-//        alphaRenameType(aType){newAType =>
-//          cont(FieldDecl(a, newAType))
-//        }
-//      case TypeDecl(a, aLowerType, aUpperType) =>
-//        val newALowerType = futureType{
-//          alphaRenameType(aLowerType)(_)
-//        }
-//        val newAUpperType = futureType{
-//          alphaRenameType(aUpperType)(_)
-//        }
-//        cont(TypeDecl(a, newALowerType, newAUpperType))
-//      case AndType(left, right) =>
-//        val newLeft = futureType{
-//          alphaRenameType(left)(_)
-//        }
-//        val newRight = futureType{
-//          alphaRenameType(right)(_)
-//        }
-//        cont(AndType(newLeft, newRight))
-//      case _ =>
-//        cont(t)
-//    }
-//
-//    def alphaRenameDef(d: Def)(cont: (Def) => Unit): Unit = d match {
-//      case DefFuture(cell) =>
-//        onComplete(cell){d =>
-//          alphaRenameDef(d)(cont)
-//        }
-//      case FieldDef(a, aTerm) =>
-//        alphaRenameTerm(aTerm){aTerm =>
-//          cont(FieldDef(a, aTerm))
-//        }
-//      case TypeDef(a, aType) =>
-//        alphaRenameType(aType){aType =>
-//          cont(TypeDef(a, aType))
-//        }
-//      case AndDef(left, right) =>
-//        alphaRenameDef(left){left =>
-//          alphaRenameDef(right){right =>
-//            cont(AndDef(left, right))
-//          }
-//        }
-//      case _ => ???
-//    }
-//
-//    def alphaRenameTerm(t: Term)(cont: (Term) => Unit): Unit = t match {
-//      case TermFuture(cell) =>
-//        onComplete(cell){t =>
-//          alphaRenameTerm(t)(cont)
-//        }
-//      case Let(x, xTerm, resTerm) =>
-//        val z = symbolUniverse.newSymbol()
-//        alphaRenameTerm(xTerm){xTerm =>
-//          alphaRenameTerm(resTerm){resTerm =>
-//            cont(exprRenameVar(x, z, Let(z, xTerm, resTerm)))
-//          }
-//        }
-//      case Obj(x, xType, d) =>
-//        alphaRenameType(xType){xType =>
-//          alphaRenameDef(d){d =>
-//            val z = symbolUniverse.newSymbol()
-//            cont(exprRenameVar(x, z, Obj(z, xType, d)))
-//          }
-//        }
-//      case Fun(x, xType, body) =>
-//        alphaRenameType(xType){xType =>
-//          alphaRenameTerm(body){body =>
-//            val z = symbolUniverse.newSymbol()
-//            cont(exprRenameVar(x, z, Fun(z, xType, body)))
-//          }
-//        }
-//      case _ =>
-//        cont(t)
-//    }
-
-//    def alphaRename[T <: Tree](t: T)(cont: (T) => Unit): Unit = t match {
-//      case FutureType(cell) =>
-//        onComplete(cell){typ =>
-//          alphaRename(typ)(cont.asInstanceOf[(Type) => Unit])
-//        }
-//      case FunType(x, xType, resType) =>
-//        alphaRename(xType){xType =>
-//          alphaRename(resType){resType =>
-//            val z = symbolUniverse.newSymbol()
-//            renameToUniqueVar(x, z, FunType(z, xType, resType))(cont.asInstanceOf[(Type) => Unit])
-//          }
-//        }
-//      case RecType(x, xType) =>
-//        alphaRename(xType){xType =>
-//          val z = symbolUniverse.newSymbol()
-//          renameToUniqueVar(x, z, RecType(z, xType))(cont.asInstanceOf[(Type) => Unit])
-//        }
-//      case FieldDecl(a, aType) =>
-//        alphaRename(aType){newAType =>
-//          cont.asInstanceOf[(Type) => Unit](FieldDecl(a, newAType))
-//        }
-//      case TypeDecl(a, aLowerType, aUpperType) =>
-//        val newALowerType = futureType{
-//          alphaRename(aLowerType)(_)
-//        }
-//        val newAUpperType = futureType{
-//          alphaRename(aUpperType)(_)
-//        }
-//        cont.asInstanceOf[(Type) => Unit](TypeDecl(a, newALowerType, newAUpperType))
-//      case AndType(left, right) =>
-//        val newLeft = futureType{
-//          alphaRename(left)(_)
-//        }
-//        val newRight = futureType{
-//          alphaRename(right)(_)
-//        }
-//        cont.asInstanceOf[(Type) => Unit](AndType(newLeft, newRight))
-//      case Let(x, xTerm, t) =>
-//        val z = symbolUniverse.newSymbol()
-//        alphaRename(xTerm){xTerm =>
-//          alphaRename(t){t =>
-//            cont.asInstanceOf[(Term) => Unit](exprRenameVar(x, z, Let(z, xTerm, t)))
-//          }
-//        }
-//      case Obj(x, xType, d) =>
-//        alphaRename(xType){xType =>
-//          alphaRename(d){d =>
-//            val z = symbolUniverse.newSymbol()
-//            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Obj(z, xType, d)))
-//          }
-//        }
-//      case Fun(x, xType, body) =>
-//        alphaRename(xType){xType =>
-//          alphaRename(body){body =>
-//            val z = symbolUniverse.newSymbol()
-//            cont.asInstanceOf[(Value) => Unit](exprRenameVar(x, z, Fun(z, xType, body)))
-//          }
-//        }
-//      case FieldDef(a, aTerm) =>
-//        alphaRename(aTerm){aTerm =>
-//          cont.asInstanceOf[(Def) => Unit](FieldDef(a, aTerm))
-//        }
-//      case TypeDef(a, aType) =>
-//        alphaRename(aType){aType =>
-//          cont.asInstanceOf[(Def) => Unit](TypeDef(a, aType))
-//        }
-//      case AndDef(left, right) =>
-//        alphaRename(left){left =>
-//          alphaRename(right){right =>
-//            cont.asInstanceOf[(Def) => Unit](AndDef(left, right))
-//          }
-//        }
-//      case _ =>
-//        cont(t)
-//    }
-
 
     def exprRenameVar[T <: Expr](fromVar: Symbol, toVar: Symbol, e: T): T = e match { // TODO do in parallel and use TermFuture
       case Var(x) if x == fromVar => Var(toVar).asInstanceOf[T]

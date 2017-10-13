@@ -347,7 +347,7 @@ object DolSpec extends Properties("DolSpec") {
     x <- const(su.newSymbol)
     p1 <- genInferenceProblem(su, scope)
     p2 <- genInferenceProblem(su, scope + (x -> p1.expectedType))
-    resType <- NoFuture.eliminateVarUp(su, scope, x, p2.expectedType, Set())
+    resType <- NoFuture.eliminateVarUp(scope, x, p2.expectedType, Set())
   } yield InferenceProblem(Let(x, p1.term, p2.term), p2.prototype, (p1.scope ++ p2.scope) - x, Let(x, p1.expected, p2.expected).withType(resType))
 
   def genSelInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = { // TODO Gen.sized
@@ -807,7 +807,7 @@ object DolSpec extends Properties("DolSpec") {
     }
   }
 
-  // TODO to be more FP-pure, symboluniverse should probably be wrapped
+  // TODO To be more FP-pure, the symboluniverse should probably be wrapped
   // together with other stuff in a monad...
 
   property("NoFuture.typeRenameVar") = {
