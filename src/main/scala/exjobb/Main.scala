@@ -6,6 +6,10 @@ import cell._
 
 object Main {
   def main(args: Array[String]): Unit = {
+    val (su, term, prototype, scope, expected) = (new SymbolUniverse(20), Obj(16,TypeDecl(17,Top,Top),TypeDef(17,Top)), Que, Map():Scope, Obj(16, TypeDecl(17,Top,Top), TypeDef(17,Top).withType(TypeDecl(17,Top,Top))).withType(TypeDecl(17,Top,Top)))
+    val res = typecheckSequentially(su, term, prototype, scope)
+
+    println(s"res = $res")
   }
 
 //  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term)

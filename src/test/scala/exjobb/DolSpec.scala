@@ -16,6 +16,7 @@ import org.scalacheck.Shrink
 
 object DolSpec extends Properties("DolSpec") {
 
+  // TODO Include type sizes in Gen size?
 
   // TODO Maybe just define generators like normal function and let caller
   // wrap in Gen as necessary? The problem is distributing the randomseed
@@ -250,17 +251,19 @@ object DolSpec extends Properties("DolSpec") {
 //    } yield CanonicalObjType(x, fields, types, projs.toSet)
 //  }
 
+
+
+
   // TODO easier to generate normal types? genCanonicalType = canonicalize(genType)?
 
-  // TODO generate non-canonical types. e.g. with intersections of multiple decls on the same member.
+  // TODO allow genType to add types to scope? Gen[(Type, updatedScope)]
   def genType(su: SymbolUniverse, scope: Scope): Gen[Type] = Gen.sized { size =>
     if (size == 0)
       Gen.fail
     else if (size == 1)
       oneOf(const(Top), const(Bot))
     else
-      //oneOf(const(Top), const(Bot), genFunType(su, scope), genObjType(su, scope)) // TODO
-      oneOf(const(Top), const(Bot), genFunType(su, scope))
+      oneOf(const(Top), const(Bot), genFunType(su, scope), genSimpleObjType(su, scope)) // TODO genTypeProj
   }
 
 //  def nextSubtype(su: SymbolUniverse, scope: Scope, tp: CanonicalType): Stream[CanonicalType] = tp match {
@@ -369,82 +372,144 @@ object DolSpec extends Properties("DolSpec") {
   }
 
 
-  // TODO def genObjInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] // TODO generate fun then def, or vice versa?
   // TODO def genAppInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] // TODO search for funs in scope and generate term from argtype // TODO gen arg, gen super of arg.type, gen function taking super giving {gen term with type}
 
   //def genAppInferenceProblemFromScope(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = // TODO find function in scope (possibly as field in object), generate term with that argtype
 
-  //def genTermFromType
+  //TODO def genTermFromType
+
+  def genSimpleDecls(su: SymbolUniverse, scope: Scope, z: Symbol): Gen[Type] = Gen.sized{ size =>
+    val genFieldDecl = for {
+      n <- const(size) if n >= 2 // 1 for FieldDecl-node and 1 for aTerm.
+      a <- const(su.newSymbol())
+      aType <- Gen.resize(n-1, genType(su, scope))
+      myType     <- const(FieldDecl(a, aType))
+      newObjType <- const(scope.get(z) match {
+        case Some(zType) => AndType(zType, myType)
+        case None        => myType
+      })
+    } yield newObjType
+
+    val genTypeDecl = for {
+      n   <- const(size) if n >= 3 // 1 for TypeDecl-node, 1 for aLowerType and 1 for aUpperType.
+      sub <- const(n - 1)
+      upperSize <- Gen.choose(1, sub-1)
+      lowerSize <- sub - upperSize
+      aUpperType <- Gen.resize(upperSize, genType(su, scope))
+      aLowerType <- Gen.resize(lowerSize, genSubtype(su, scope, aUpperType, Set()))
+      a <- const(su.newSymbol())
+      myType <- const(TypeDecl(a, aLowerType, aUpperType))
+      newObjType <- const(scope.get(z) match {
+        case Some(zType) => AndType(zType, myType)
+        case None        => myType
+      })
+    } yield newObjType
+
+    val genDeclIntersection = for {
+      n   <- const(size) if n >= 5 // 1 for AndDef and 2 for each side (since FieldDef and TypeDef needs atleast 2 each).
+      sub <- const(n - 1)
+      leftSize   <- Gen.choose(2, sub-2)
+      rightSize  <- const(sub - leftSize)
+      leftType   <- Gen.resize(leftSize, genSimpleDecls(su, scope, z))
+      leftObjType <- const(scope.get(z) match {
+        case Some(zType) => AndType(zType, leftType)
+        case None        => leftType
+      })
+      rightType  <- Gen.resize(rightSize, genSimpleDecls(su, scope + (z -> leftObjType), z))
+      myType     <- const(AndType(leftType, rightType))
+      newObjType <- const(scope.get(z) match {
+        case Some(zType) => AndType(zType, myType)
+        case None        => myType
+      })
+    } yield newObjType
+
+    if (size >= 5)
+      oneOf(genFieldDecl, genTypeDecl, genDeclIntersection)
+    else if (size >= 3)
+      oneOf(genFieldDecl, genTypeDecl)
+    else if (size >= 2)
+      genFieldDecl
+    else
+      Gen.fail
+  }
+
+  def genSimpleObjType(su: SymbolUniverse, scope: Scope): Gen[Type] = Gen.sized{ size =>
+    // TODO subtract 1 from size for rectype?
+    for {
+      z <- const(su.newSymbol())
+      zType <- genSimpleDecls(su, scope, z)
+    } yield if (NoFuture.isVarFreeInType(z, zType)) RecType(z, zType) else zType
+  }
 
 
-//  def genFieldDef(su: SymbolUniverse, scope: Scope): Gen[(Symbol, InferenceProblem)] = Gen.sized{ size =>
-//    for {
-//      a <- const(su.newSymbol())
-//      p <- Gen.resize(size-1, genInferenceProblem(su, scope))
-//    } yield (a, InferenceProblem(p.term, p.prototype, p.scope, p.expected))
-//  }
-//
-//  def genTypeDef(su: SymbolUniverse, scope: Scope): Gen[(Symbol, CanonicalType)] = Gen.sized{ size =>
-//    for {
-//      a <- const(su.newSymbol())
-//      aType <- Gen.resize(size - 1, genCanonicalType(su, scope))
-//    } yield (a, aType)
-//  }
-//
-//  def genDef(su: SymbolUniverse, scope: Scope): Gen[(Map[Symbol, InferenceProblem], Map[Symbol, CanonicalType])] = oneOf(
-//    for {
-//      (a, p) <- genFieldDef(su, scope)
-//    } yield (Map(a -> p), Map()): (Map[Symbol, InferenceProblem], Map[Symbol, CanonicalType]),
-//    for {
-//      (a, aType) <- genTypeDef(su, scope)
-//    } yield (Map(), Map(a -> aType)): (Map[Symbol, InferenceProblem], Map[Symbol, CanonicalType])
-//  )
-//
-//  def genManyDefs(su: SymbolUniverse, scope: Scope, z: Symbol): Gen[(Map[Symbol, InferenceProblem], Map[Symbol, CanonicalType])] = Gen.sized { size =>
-//    if (size <= 0)
-//      const(Map(), Map())
-//    else if (size == 1)
-//      genDef(su, scope)
-//    else for {
-//      numLeft <- Gen.choose(1, size-1) // NOTE: non-empty.
-//      numRight <- const(size - numLeft)
-//      (leftFieldMap, leftTypeMap) <- Gen.resize(numLeft, genManyDefs(su, scope, z))
-//
-//      leftFields <- const(leftFieldMap.map{case (a, p) => (a, p.expectedType)})
-//      leftTypes <- const(leftTypeMap.map{case (a, aType) => (a, (aType, aType))})
-//
-//      rightScope <- const(scope + (z -> CanonicalObjType(z, leftFields, leftTypes, Set())))
-//      (rightFieldMap, rightTypeMap) <- Gen.resize(numRight, genManyDefs(su, rightScope, z))
-//    } yield (leftFieldMap ++ rightFieldMap, leftTypeMap ++ rightTypeMap)
-//  }
-//
-//  // TODO genComplicatedObjInferenceProblem with scary recursive dependencies between fields, types and typeprojs.
-//
-//  def genObjInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = Gen.sized{ size =>
-//    for {
-//      x <- const(su.newSymbol())
-//      (fields, types) <- Gen.resize(size / 2, genManyDefs(su, scope, x)) if fields.size + types.size >= 1
-//
-//      fieldDefs <- const(fields.map{case (a, p) => FieldDef(a, p.term)}) // TODO prototypes
-//      typeDefs <- const(types.map{case (a, aType) => TypeDef(a, NoFuture.decanonicalize(aType))})
-//      defs <- const((fieldDefs ++ typeDefs).reduce(AndDef(_, _)))
-//
-//      newScope <- const(scope ++ fields.flatMap{case (a, p) => p.scope})
-//
-//      typedFieldDefs <- const(fields.map{case (a, p) => FieldDef(a, p.expected)})
-//      typedDefs <- const((typedFieldDefs ++ typeDefs).reduce(AndDef(_, _)))
-//
-//      fieldDecls <- const(fields.map{case (a, p) => FieldDecl(a, NoFuture.decanonicalize(p.expectedType))})
-//      typeDecls <- const(types.map{case (a, aType) => TypeDecl(a, NoFuture.decanonicalize(aType), NoFuture.decanonicalize(aType))})
-//      xType <- const(RecType(x, (fieldDecls ++ typeDecls).reduce(AndType(_, _))))
-//
-//      canonicalFields <- const(fields.map{case (a, p) => (a, p.expectedType)})
-//      canonicalTypes <- const(types.map{case (a, aType) => (a, (aType, aType))})
-//      projs <- const(Set[TypeProj]()) // TODO add some?
-//      xCanonicalType <- const(CanonicalObjType(x, canonicalFields, canonicalTypes, projs))
-//    } yield InferenceProblem(Obj(x, xType, defs), Que, newScope - x, Obj(x, xType, typedDefs).withType(xCanonicalType))
-//  }
-//
+  //TODO def genComplexObjType(su: SymbolUniverse, scope: Scope): Gen[Type]
+
+  def genSimpleDef(su: SymbolUniverse, scope: Scope, z: Symbol): Gen[(Def, Scope, TypedDef)] = Gen.sized{ size =>
+    val genFieldDef = for {
+      n <- const(size) if n >= 2 // 1 for FieldDef-node and 1 for aTerm.
+      a <- const(su.newSymbol())
+      p <- Gen.resize(n-1, genInferenceProblem(su, scope))
+      myType     <- const(FieldDecl(a, p.expectedType))
+      newObjType <- const(p.scope.get(z) match {
+        case Some(zType) => AndType(zType, myType)
+        case None        => myType
+      })
+    } yield (FieldDef(a, p.term), p.scope + (z -> newObjType), FieldDef(a, p.expected).withType(myType))
+
+    val genTypeDef = for {
+      n <- const(size) if n >= 2 // 1 for TypeDef-node and 1 for aType.
+      a <- const(su.newSymbol())
+      aType      <- Gen.resize(n-1, genType(su, scope))
+      myType     <- const(TypeDecl(a, aType, aType))
+      newObjType <- const(scope.get(z) match {
+        case Some(zType) => AndType(zType, myType)
+        case None        => myType
+      })
+    } yield (TypeDef(a, aType), scope + (z -> newObjType), TypeDef(a, aType).withType(myType))
+
+    val genAndDef = for {
+      n   <- const(size) if n >= 5 // 1 for AndDef and 2 for each side (since FieldDef and TypeDef needs atleast 2 each).
+      sub <- const(n - 1)
+      leftSize  <- Gen.choose(2, sub-2)
+      rightSize <- const(sub - leftSize)
+      (leftDef, leftScope, leftTypedDef)    <- Gen.resize(leftSize, genSimpleDef(su, scope, z))
+      (rightDef, rightScope, rightTypedDef) <- Gen.resize(rightSize, genSimpleDef(su, leftScope, z))
+      myType     <- const(AndType(leftTypedDef.assignedType, rightTypedDef.assignedType))
+      newObjType <- const(rightScope.get(z) match {
+        case Some(zType) => AndType(zType, myType)
+        case None        => myType
+      })
+    } yield (AndDef(leftDef, rightDef), rightScope + (z -> newObjType), AndDef(leftTypedDef, rightTypedDef).withType(myType))
+
+    if (size >= 5)
+      oneOf(genFieldDef, genTypeDef, genAndDef)
+    else if (size >= 2)
+      oneOf(genFieldDef, genTypeDef)
+    else
+      Gen.fail
+  }
+
+  def genSimpleObjInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = Gen.sized{ size =>
+    if (size == 0) Gen.fail
+    for {
+      x <- const(su.newSymbol())
+      (defs, defsScope, typedDefs) <- Gen.resize(size - 1, genSimpleDef(su, scope, x))
+      xType <- const(typedDefs.assignedType)
+    } yield InferenceProblem(Obj(x, xType, defs), Que, defsScope - x, Obj(x, xType, typedDefs).withType(xType))
+  }
+
+  // TODO genComplexObjInferenceProblem
+  // membersWithKnownTypes <- gen some (Symbol, Decl)
+  // gen all other members:
+  //  member x can see membersWithKnownTypes
+  //  member x can see also member y if y < x
+  //
+  // gen defs for membersWithKnownTypes.
+  //  member x can see all members.
+
+  def genObjInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] =
+    genSimpleObjInferenceProblem(su, scope)
+    // TODO genComplexObjInferenceProblem
 
   // TODO genInferenceProblemFromType: Modify genInferenceProblem to take a prototype and use fixed-point
   // to eliminate the prototype?
@@ -494,28 +559,13 @@ object DolSpec extends Properties("DolSpec") {
     prototype <- const(if (body.prototype == Que) Que else FunType(x, Que, body.prototype))
   } yield InferenceProblem(Fun(x, xType, body.term), prototype, body.scope - x, Fun(x, xType, body.expected).withType(FunType(x, xType, body.expectedType)))
 
-//  def genFixedPointInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = for { // TODO use LightweightApp instead.
-//    f <- const(su.newSymbol)
-//    x <- const(su.newSymbol)
-//    y <- const(su.newSymbol)
-//    p <- genInferenceProblem(su, scope)
-//    typ <- const(p.expectedType)
-//  } yield InferenceProblem(
-//    Let(f, Fun(x, NoFuture.decanonicalize(typ), Var(x)), Let(y, p.term, App(f, y))),
-//    Que,
-//    p.scope - f - x - y,
-//    Let(f,
-//      Fun(x, NoFuture.decanonicalize(typ), Var(x).withType(typ)).withType(CanonicalFunType(x, typ, typ, Set())),
-//      Let(y, p.expected, App(f, y).withType(typ)).withType(typ)).withType(typ))
-
   def genInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = oneOf(
     genVarInferenceProblem(su, scope),
     genLetInferenceProblem(su, scope),
     genSelInferenceProblem(su, scope),
     genFunInferenceProblem(su, scope),
-    genAppInferenceProblem(su, scope)//,
-    //genObjInferenceProblem(su, scope),
-    //genFixedPointInferenceProblem(su, scope)
+    genAppInferenceProblem(su, scope),
+    genObjInferenceProblem(su, scope)
   )
 
   def isTermFullyTyped(term: Term): Boolean = {
@@ -570,18 +620,19 @@ object DolSpec extends Properties("DolSpec") {
     // TODO use flatMap to make lazystreams?
 
     res = res #::: (problem match {
-      case InferenceProblem(Sel(x, a), prototype, scope, expected) =>
-        NoFuture.select(su, scope, x, a) match {
-          case Some(aType) =>
-            val w = su.newSymbol()
-            val newScope = scope + (w -> aType)
-            Stream(InferenceProblem(Var(w), prototype, newScope, Var(w).withType(aType)))
-          case None =>
-            println(s"problem= $problem")
-            ???; Stream()
-        }
+      case InferenceProblem(Var(_), _, _, _) => Stream()
+      case InferenceProblem(_, prototype, scope, expected) =>
+        val w = su.newSymbol()
+        val expectedType = expected.assignedType
+        Stream(InferenceProblem(Var(w), Que, scope + (w -> expectedType), Var(w).withType(expectedType)))
       case _ => Stream()
     })
+
+    //res = res #::: (problem match {
+    //  case InferenceProblem(Obj(x, xType, defs), prototype, scope, expected) =>
+    //    // TODO replace some FieldDef(a, t) with FieldDef(a, Var(w))
+    //  case _ => Stream()
+    //})
 
 //    res = res #::: (problem match {
 //      case InferenceProblem(App(x, y), prototype, scope, expected) =>
@@ -652,37 +703,6 @@ object DolSpec extends Properties("DolSpec") {
     shrinkInferenceProblem(su, problem, isRoot=true).map{newProblem => (su, newProblem)}
   }
 
-  property("positiveSequentialInferenceProblem") = {
-    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem) { case (su, problem) =>
-      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
-
-      val resString = res match {
-        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
-        case None => "res = None"
-      }
-
-      resString |: Prop.all(
-        res != None && NoFuture.equalTerms(problem.scope, res.get, problem.expected))
-    }
-  }
-
-  // TODO
-//  property("positiveParallelInferenceProblem") = {
-//    val su = new SymbolUniverse()
-//    val generator: Gen[InferenceProblem] = genInferenceProblem(su, Map())
-//    val shrink: InferenceProblem => Stream[InferenceProblem] = shrinkInferenceProblem(su, _, isRoot=true)
-//    Prop.forAllShrink(generator, shrink) { (problem: InferenceProblem) =>
-//      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
-//
-//      val resString = res match {
-//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
-//        case None => "res = None"
-//      }
-//
-//      resString |: Prop.all(
-//        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
-//    }
-//  }
 
   //property("genCanonicalTypeSizeIsConsistentWithDolNotionOfSize") = { // TODO better name
   //  // TODO check that if we run a Gen[CanonicalType]-generator with size N,
@@ -701,23 +721,6 @@ object DolSpec extends Properties("DolSpec") {
           e.printStackTrace();
           false
       }
-    }
-  }
-
-  property("shrinkPreservesTypecorrectness") = { // TODO
-    val su = new SymbolUniverse()
-    val generator: Gen[(InferenceProblem, InferenceProblem)] = for {
-      problem <- genInferenceProblem(su, Map()) //if typecheckSequentially(su, problem.term, problem.prototype, problem.scope) != None
-      shrunkProblems <- const(shrinkInferenceProblem(su, problem, isRoot=true)) if !shrunkProblems.isEmpty
-      newProblem <- oneOf(shrunkProblems)
-    } yield (problem, newProblem)
-    Prop.forAllNoShrink(generator) { (origAndShrunk: (InferenceProblem, InferenceProblem)) =>
-      val (origProblem, newProblem) = origAndShrunk
-      (s"newProblem = $newProblem"
-        |: s"origProblem = $origProblem"
-        |: Prop.all(
-          (typecheckSequentially(su, origProblem.term, origProblem.prototype, origProblem.scope) != None)
-          ==> (typecheckSequentially(su, newProblem.term, newProblem.prototype, newProblem.scope) != None)))
     }
   }
 
@@ -795,6 +798,17 @@ object DolSpec extends Properties("DolSpec") {
     }
   }
 
+  property("NoFuture.isSubtypeOf(t,t)") = {
+    val generator: Gen[(Scope, Type)] = for {
+      su <- const(new SymbolUniverse())
+      scope <- genScope(su)
+      typ <- genType(su, scope)
+    } yield (scope, typ)
+    Prop.forAllNoShrink(generator) { case (scope, typ) =>
+      NoFuture.isSubtypeOf(scope, typ, typ)
+    }
+  }
+
   property("NoFuture.isSubtypeOf") = {
     val generator: Gen[(Scope, Type, Type)] = for {
       su <- const(new SymbolUniverse())
@@ -838,7 +852,83 @@ object DolSpec extends Properties("DolSpec") {
 
   // TODO check eliminateVarUp by starting with a type with no vars, and then
   // replacing parts with vars.  scope={},Int  --> scope={x->{T=Int}},x.T
+
+//  property("shrinkPreservesTypecorrectness") = { // TODO
+//    val su = new SymbolUniverse()
+//    val generator: Gen[(InferenceProblem, InferenceProblem)] = for {
+//      problem <- genInferenceProblem(su, Map()) //if typecheckSequentially(su, problem.term, problem.prototype, problem.scope) != None
+//      shrunkProblems <- const(shrinkInferenceProblem(su, problem, isRoot=true)) if !shrunkProblems.isEmpty
+//      newProblem <- oneOf(shrunkProblems)
+//    } yield (problem, newProblem)
+//    Prop.forAllNoShrink(generator) { (origAndShrunk: (InferenceProblem, InferenceProblem)) =>
+//      val (origProblem, newProblem) = origAndShrunk
+//      (s"newProblem = $newProblem"
+//        |: s"origProblem = $origProblem"
+//        |: Prop.all(
+//          (typecheckSequentially(su, origProblem.term, origProblem.prototype, origProblem.scope) != None)
+//          ==> (typecheckSequentially(su, newProblem.term, newProblem.prototype, newProblem.scope) != None)))
+//    }
+//  }
+
+  property("positiveSequentialInferenceProblem") = {
+    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem) { case (su, problem) =>
+      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
+
+      val resString = res match {
+        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+        case None => "res = None"
+      }
+
+      resString |: Prop.all(
+        res != None && NoFuture.equalTerms(problem.scope, res.get, problem.expected))
+    }
+  }
+
+  // TODO
+//  property("positiveParallelInferenceProblem") = {
+//    val su = new SymbolUniverse()
+//    val generator: Gen[InferenceProblem] = genInferenceProblem(su, Map())
+//    val shrink: InferenceProblem => Stream[InferenceProblem] = shrinkInferenceProblem(su, _, isRoot=true)
+//    Prop.forAllShrink(generator, shrink) { (problem: InferenceProblem) =>
+//      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
+//
+//      val resString = res match {
+//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+//        case None => "res = None"
+//      }
+//
+//      resString |: Prop.all(
+//        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
+//    }
+//  }
 }
 
 /*
+
+
+
+[info] > ARG_0: (SymbolUniverse(current=300),
+  InferenceProblem(
+    Obj(31,FieldDecl(32,AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot))),FieldDef(32,Let(34,Fun(41,Bot,Fun(46,FunType(48,Bot,Top),App(46,54))),Let(56,Var(5),Obj(70,AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot)),AndDef(TypeDef(71,Top),FieldDef(72,Var(73)))))))),
+    Que,
+    Map(5 -> Top, 73 -> Bot, 54 -> Bot),
+    Obj(31,
+      FieldDecl(32,AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot))),
+      FieldDef(32,
+        Let(34, Fun(41, Bot, Fun(46, FunType(48,Bot,Top), App(46,54).withType(Top)).withType(FunType(46,FunType(48,Bot,Top),Top))).withType(FunType(41,Bot,FunType(46,FunType(48,Bot,Top),Top))),
+          Let(56, Var(5).withType(Top), Obj(70, AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot)), AndDef(TypeDef(71,Top).withType(TypeDecl(71,Top,Top)), FieldDef(72, Var(73).withType(Bot)).withType(FieldDecl(72,Bot))).withType(AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot)))).withType(AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot)))).withType(AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot)))).withType(AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot)))).withType(FieldDecl(32,AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot))))).withType(FieldDecl(32,AndType(TypeDecl(71,Top,Top),FieldDecl(72,Bot))))))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 */

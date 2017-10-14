@@ -19,6 +19,8 @@ object Dol {
   type Symbol = Int
   type SymbolPath = Seq[Symbol]
 
+  class TypecheckError(s: String = "typecheck error") extends Exception(s)
+
   // TODO Idea: Maybe treat entire typechecker as a constraint-solver and
   // typecheck in two steps: 1) gather constraints, 2) solve them. This is
   // similar what I tried with Hindley-Milner. Technically this is actually
@@ -34,27 +36,31 @@ object Dol {
   }
   sealed trait Expr extends Tree {
     @volatile var assignedTypeOption: Option[Type] = None // TODO does it need to be volatile? // TODO vs trait TypedExpr?
-    def withType(typ: Type): Expr // TODO as standalone function? that way we don't have to redeclare it in every subclass...
-    def withTypeOption(typeOption: Option[Type]): Expr
+
+    type ThisType <: Expr
+    def withTypeOption(typeOption: Option[Type]): ThisType
+
+    def withType(typ: Type): ThisType = withTypeOption(Some(typ))
     def assignedType = assignedTypeOption.get
+
+    def withTypeOptionHelper[E <: Expr](clonedExpr: E, typeOption: Option[Type]): E = {clonedExpr.assignedTypeOption = typeOption; clonedExpr}
   }
   sealed trait Term  extends Expr {
-    def withType(typ: Type): Term
-    def withTypeOption(typeOption: Option[Type]): Term
+    type ThisType <: Term
   }
   sealed trait Value extends Term {
-    def withType(typ: Type): Value
-    def withTypeOption(typeOption: Option[Type]): Value
+    type ThisType <: Value
   }
   sealed trait Type  extends Tree
   sealed trait Decl  extends Type
   sealed trait Def   extends Expr {
-    def withType(typ: Type): Def
-    def withTypeOption(typeOption: Option[Type]): Def
+    type ThisType <: Def
   }
+
 
   // Term ::=
   case class Var(x: Symbol) extends Term {
+    type ThisType = Var
     val treeHeight = 1
     val totNumNodes = 1
     def withTypeOption(typeOption: Option[Type]) = {
@@ -62,91 +68,58 @@ object Dol {
       res.assignedTypeOption = typeOption
       res
     }
-    def withType(typ: Type) = withTypeOption(Some(typ))
   }
   case class App(x: Symbol, y: Symbol) extends Term {
+    type ThisType = App
     val treeHeight = 1
     val totNumNodes = 1
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
-  case class Let(x: Symbol, xTerm: Term, resTerm: Term) extends Term {
+  final case class Let(x: Symbol, xTerm: Term, resTerm: Term) extends Term {
+    type ThisType = Let
     val treeHeight = 1 + math.max(xTerm.treeHeight, resTerm.treeHeight)
     val totNumNodes = 1 + xTerm.totNumNodes + resTerm.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class Sel(x: Symbol, a: Symbol) extends Term {
+    type ThisType = Sel
     val treeHeight = 1
     val totNumNodes = 1
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
 
   // Value ::=
   case class Obj(x: Symbol, xType: Type, body: Def) extends Value {
+    type ThisType = Obj
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class Fun(x: Symbol, xType: Type, body: Term) extends Value {
+    type ThisType = Fun
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
 
   // Def ::=
   case class FieldDef(a: Symbol, aTerm: Term) extends Def {
+    type ThisType = FieldDef
     val treeHeight = 1 + aTerm.treeHeight
     val totNumNodes = 1 + aTerm.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class TypeDef(a: Symbol, aType: Type) extends Def {
+    type ThisType = TypeDef
     val treeHeight = 1 + aType.treeHeight
     val totNumNodes = 1 + aType.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class AndDef(left: Def, right: Def)  extends Def {
+    type ThisType = AndDef
     val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
     val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
-    def withType(typ: Type) = withTypeOption(Some(typ))
+    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
 
   // DOL Extensions to DOT // TODO
@@ -225,7 +198,8 @@ object Dol {
     case (_, ConstantVariance) => a
   }
 
-  type TypedTerm = Term // TODO Do something a bit more special here? Only serves as documentation right now.
+  type TypedTerm = Term // TODO Do something a bit more interesting here? Only serves as documentation right now.
+  type TypedDef = Def // TODO Do something a bit more interesting here? Only serves as documentation right now.
   //sealed trait Typed { // TODO maybe something like this?
   //  val assignedTypeOption: Type
   //}
@@ -299,8 +273,8 @@ object Dol {
           } yield typeRenameVar(y, x, yAType) // TODO is this correct? will it not add meaning to yAType? Better to eliminate y?
         case Some(AndType(left, right)) =>
           val z = su.newSymbol()
-          val leftUpperOption = inner(scope + (z -> left), x, a, visited)
-          val rightUpperOption = inner(scope + (z -> right), x, a, visited)
+          val leftUpperOption = inner(scope + (z -> left), z, a, visited)
+          val rightUpperOption = inner(scope + (z -> right), z, a, visited)
           optionUnion(leftUpperOption, rightUpperOption){andType(_, _)}.map{typeRenameVar(z, x, _: Type)}
         case Some(bProj @ TypeProj(y, b)) if visited(bProj) =>
           None
@@ -416,22 +390,22 @@ object Dol {
 
         case (TypeProj(x, a), TypeProj(y, b)) if lhs == rhs => lhs
         case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) if lhs != rhs =>
-          val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{???; ErrorType}
-          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{???; ErrorType}
+          val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
 
           andType(
             inner(scope, aUpperType, rhs, visitedLeft + aProj, visitedRight),
             inner(scope, lhs, bLowerType, visitedLeft, visitedRight + bProj)) // TODO is this correct?
 
         case (aProj @ TypeProj(x, a), _) =>
-          val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{???; ErrorType}
+          val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
           inner(scope, aUpperType, rhs, visitedLeft + aProj, visitedRight)
         case (_, bProj @ TypeProj(y, b))  =>
-          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{???; ErrorType}
+          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
           inner(scope, lhs, bLowerType, visitedLeft, visitedRight + bProj)
 
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
-          inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight)
+          inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight) // TODO WRONG
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
           val argType = andType(xType, yType)
           val resType = inner(scope + (x -> argType), xResType, yResType, visitedLeft, visitedRight)
@@ -486,7 +460,7 @@ object Dol {
       }
 
       sealed trait SolveResult
-      case class  Solution(solution: Map[TypeProj, Type]) extends SolveResult
+      case class  Solution(solution: Map[TypeProj, (Scope, Type, Variance)]) extends SolveResult
       case object Inconsistent extends SolveResult // Meaning: There are multiple solutions, but they can not be merged. E.g. x.T=fun | x.T=obj.
       case object NoSolution extends SolveResult
 
@@ -502,28 +476,68 @@ object Dol {
               // TODO min solution? how? what if some left and some right are min? check [pierce00]...
               // TODO depends on variance somehow?
               // TODO what if difference variance on each side?
-              ???
+              // TODO is this correct?
+
+              //println(leftSolution, rightSolution)
+
+              if (leftSolution.keys != rightSolution.keys) ??? // not supposed to happen.
+
+              val variancesMatch = mapIntersect(leftSolution, rightSolution){
+                case ((_,_,v1), (_,_,v2)) if v1 == v2 => true
+                case ((_,_,_), (_,_,ConstantVariance)) => true
+                case ((_,_,ConstantVariance), (_,_,_)) => true
+                case _ => false
+              }.forall{_._2}
+
+              val leftIsMin = mapIntersect(leftSolution, rightSolution){case ((s1,t1,v1), (s2,t2,v2)) =>
+                val scope = s1 ++ s2 // TODO correct?
+                if (mergeVariance(v1, v2) == Contravariant)
+                  isSubtypeOf(scope, t2, t1)
+                else
+                  isSubtypeOf(scope, t1, t2)
+              }.forall{_._2}
+
+              val rightIsMin = mapIntersect(leftSolution, rightSolution){case ((s1,t1,v1), (s2,t2,v2)) =>
+                val scope = s1 ++ s2 // TODO correct?
+                isSubtypeOf(scope, t1, t2)
+              }.forall{_._2}
+
+              if (!variancesMatch)
+                NoSolution
+              else if (leftIsMin)
+                Solution(leftSolution)
+              else if (rightIsMin)
+                Solution(rightSolution)
+              else
+                NoSolution
           }
         case _ =>
           subsolve(constraint) match {
             case Some(res) =>
-              Solution(res.map{case (proj, (scope, lower, upper, variance)) =>
-                if (!isSubtypeOf(scope, lower, upper))
-                  proj -> error()
-                else
-                  proj -> (variance match {
+              val badBounds = res.exists{case (_, (scope, lower, upper, variance)) =>
+                (!isSubtypeOf(scope, lower, upper)
+                  || (variance == Invariant
+                    && !isSubtypeOf(scope, upper, lower)))
+              }
+              if (badBounds) {
+                NoSolution
+              } else {
+                Solution(res.map{case (proj, (scope, lower, upper, variance)) =>
+                  val typ = variance match {
                     case Covariant        => lower
                     case Contravariant    => upper
                     case ConstantVariance => lower
-                    case Invariant if isSubtypeOf(scope, upper, lower) => lower
-                  })
-              }) // TODO check VARIANCE!!!!
+                    case Invariant        => lower
+                  }
+                  proj -> (scope, typ, variance)
+                })
+              }
             case None => NoSolution
           }
       }
 
       solve(dnf(constraint)) match {
-        case Solution(res) => Some(res)
+        case Solution(res) => Some(res.map{case (p, (_, typ, _)) => p -> typ})
         case Inconsistent  => ???; None
         case NoSolution    => None
       }
@@ -653,8 +667,8 @@ object Dol {
             val aUpperType = ??? // TODO get rid of other type-projections in solveSet.
             SubtypeConstraint(scope, aUpperType, to, variance) // TODO correct? vs reverse?
           } else { // if (!solveSet(aProj) && !solveSet(bProj))
-            val aUpperType = if (visitedUp(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{???; ErrorType}
-            val bLowerType = if (visitedDown(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{???; ErrorType}
+            val aUpperType = if (visitedUp(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+            val bLowerType = if (visitedDown(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
 
             orConstraint(
               gath(scope, aUpperType, bProj, visitedUp + aProj, visitedDown, variance),
@@ -666,7 +680,7 @@ object Dol {
             val bLower = to // TODO get rid of all type-projections?
             SubtypeConstraint(scope, from, bLower, variance)
           } else {
-            val aUpperType = if (visitedUp(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{???; ErrorType}
+            val aUpperType = if (visitedUp(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
             gath(scope, aUpperType, to, visitedUp + aProj, visitedDown, variance)
           }
 
@@ -675,7 +689,7 @@ object Dol {
             val aUpperType = from // TODO get rid of all type-projections?
             SubtypeConstraint(scope, aUpperType, to, variance)
           } else {
-            val bLowerType = if (visitedDown(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{???; ErrorType}
+            val bLowerType = if (visitedDown(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
             gath(scope, from, bLowerType, visitedUp, visitedDown, variance)
           }
 
@@ -683,7 +697,7 @@ object Dol {
 
         case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
           andConstraint(
-            gath(scope, bLowerType, aLowerType, visitedUp, visitedDown, variance),
+            gath(scope, bLowerType, aLowerType, visitedDown, visitedUp, reverseVariance(variance)),
             gath(scope, aUpperType, bUpperType, visitedUp, visitedDown, variance))
 
         case (Top, Top) => TrueConstraint
@@ -698,7 +712,7 @@ object Dol {
 
     def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
       case aProj @ TypeProj(x, a) if x == z =>
-        val aUpperType = typeProjectUpper(scope, x, a).getOrElse{???; ErrorType}
+        val aUpperType = typeProjectUpper(scope, x, a).getOrElse{error()}
         eliminateVarUp(scope, z, aUpperType, visited + aProj)
       case TypeProj(x, a) if x != z =>
         typ
@@ -721,7 +735,7 @@ object Dol {
 
     def eliminateVarDown(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
         case aProj @ TypeProj(x, a) if x == z =>
-          val aLowerType = typeProjectLower(scope, x, a).getOrElse{???; ErrorType}
+          val aLowerType = typeProjectLower(scope, x, a).getOrElse{error()}
           eliminateVarDown(scope, z, aLowerType, visited + aProj)
         case TypeProj(x, a) if x != z =>
           typ
@@ -746,7 +760,7 @@ object Dol {
     }
 
 
-    def error() = {???; ErrorType}
+    def error() = {throw new TypecheckError(); ErrorType}
 
     def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): TypedTerm = (term, prototype) match {
       case (Var(x), p) =>
@@ -795,7 +809,7 @@ object Dol {
       case (Fun(x, _, _), Top) =>
         typecheckTerm(su, term, FunType(x, Bot, Top), scope)
       case (Fun(x, _, _), FunType(y, _, _)) if x != y =>
-        val typedTerm = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope)
+        val typedTerm = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope) // TODO WRONG
         val typ = typedTerm.assignedType
         typedTerm.withType(typeRenameBoundVarAssumingNonFree(y, typ))
       case (Fun(x, xType, resTerm), FunType(y, argPrototype, resPrototype)) if x == y =>
@@ -815,23 +829,46 @@ object Dol {
         val localScope = scope + (x -> xType)
         def typecheckDef(d: Def): Def = d match {
           case AndDef(left, right) =>
-            AndDef(typecheckDef(left), typecheckDef(right))
+            val typedLeft = typecheckDef(left)
+            val typedRight = typecheckDef(right)
+            val typ = AndType(typedLeft.assignedType, typedRight.assignedType)
+            AndDef(typedLeft, typedRight).withType(typ)
           case FieldDef(a, aTerm) =>
-            val declPrototypes = ???
-            val aPrototype = ???
-            val typedATerm = typecheckTerm(su, aTerm, aPrototype, localScope)
-            ???
+            val aPrototype = raise(su, scope, xType, FieldDecl(a, Que)) match {
+              case Some(FieldDecl(b, bPrototype)) if a == b => bPrototype
+              case None => Que
+              case _ => error()
+            }
+            val aTypedTerm = typecheckTerm(su, aTerm, aPrototype, localScope)
+            FieldDef(a, aTypedTerm).withType(FieldDecl(a, aTypedTerm.assignedType))
           case TypeDef(a, aType) =>
             val typ = TypeDecl(a, aType, aType)
-            val declPrototypes = ???
-            ???
-          case _ => ???; d // TODO Complains about DefFuture otherwise.
+            val declPrototype = raise(su, scope, xType, TypeDecl(a, Que, Que)) match {
+              case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
+              case None => TypeDecl(a, Que, Que)
+              case _ => error()
+            }
+            val myType = raise(su, scope, TypeDecl(a, aType, aType), declPrototype) match {
+              case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
+              case _ => error()
+            }
+            d.withType(myType)
+          case _ => d.withType(error()) // complains about DefFuture.
         }
+        // TODO check everything in xType is in defs
+
         val typedDefs = typecheckDef(defs)
-        Obj(x, xType, typedDefs).withType(raise(su, scope, xType, p).getOrElse{???; ErrorType})
+        if (!isSubtypeOf(scope, typedDefs.assignedType, xType)) {
+          println(s"typedDefs.assignedType = ${typedDefs.assignedType}")
+          println(s"xType = $xType")
+          term.withType(error())
+        } else {
+          val raisedType = raise(su, scope + (x -> xType), xType, p).getOrElse{error()}
+          Obj(x, xType, typedDefs).withType(raisedType)
+        }
       // TODO DOL extensions to DOT
       case _ =>
-        ???; term.withType(ErrorType) // TODO
+        term.withType(error())
     }
 
     def raise(su: SymbolUniverse, scope: Scope, from: Type, to: Prototype): Option[Type] = {
@@ -876,6 +913,7 @@ object Dol {
       case _ =>
         typ
     }
+
 
     def typeRenameBoundVarAssumingNonFree(toVar: Symbol, typ: Type): Type = {
       if (isVarFreeIn(toVar, typ)) ???
@@ -979,12 +1017,10 @@ object Dol {
       val secondMap = defAsMap(second)
 
       (firstMap.keys == secondMap.keys
-        && mapIntersect(firstMap, secondMap){(left, right) =>
-          (left, right) match {
-            case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(scope, aTerm, bTerm)
-            case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypes(scope, aType, bType)
-            case _ => false
-          }
+        && mapIntersect(firstMap, secondMap){
+          case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(scope, aTerm, bTerm)
+          case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypes(scope, aType, bType)
+          case _ => false
         }.values.forall{(x: Boolean) => x})
     }
 
@@ -993,7 +1029,7 @@ object Dol {
       val assignedTypesEqual = (for {
         firstType <- first.assignedTypeOption
         secondType <- second.assignedTypeOption
-      } yield equalTypes(scope, firstType, secondType)).getOrElse(true)
+      } yield equalTypes(scope, firstType, secondType)).getOrElse(false)
 
       assignedTypesEqual && ((first, second) match {
         case (Var(_), Var(_))       => (first == second)
@@ -1051,7 +1087,7 @@ object Dol {
             && inner(scope, first, right, visitedLeft, visitedRight))
 
         case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
-          inner(scope, first, typeRenameBoundVarAssumingNonFree(x, second), visitedLeft, visitedRight)
+          inner(scope, first, typeRenameBoundVarAssumingNonFree(x, second), visitedLeft, visitedRight) // TODO WRONG
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
           (inner(scope, yType, xType, visitedRight, visitedLeft)
             && inner(scope, xResType, yResType, visitedLeft, visitedRight))
@@ -1348,12 +1384,12 @@ object Dol {
     }
   }
 
-  def mapIntersect[K, T, A, B](a: Map[K, A], b: Map[K, B])(f: (A, B) => T): Map[K, T] = {
+  def mapIntersect[K, T, A, B](a: Map[K, A], b: Map[K, B])(f: ((A, B)) => T): Map[K, T] = {
     b.flatMap{
       case (k, kValueInB) =>
         a.get(k) match {
           case Some(kValueInA) =>
-            Some(k -> f(kValueInA, kValueInB))
+            Some(k -> f((kValueInA, kValueInB)))
           case None =>
             None
         }
@@ -1777,6 +1813,7 @@ object Dol {
     }
 
     case class TermFuture(cell: DefaultCell[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances! // TODO pool as argument instead?
+      type ThisType = TermFuture
       val treeHeight = 1
       val totNumNodes = 1
       assignedTypeOption = Some(futureType{cont =>
@@ -1789,10 +1826,10 @@ object Dol {
         res.assignedTypeOption = typeOption
         res
       }
-      def withType(typ: Type) = withTypeOption(Some(typ))
     }
 
     case class DefFuture(cell: DefaultCell[Def]) extends Def { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
+      type ThisType = DefFuture
       val treeHeight = 1
       val totNumNodes = 1
       def withTypeOption(typeOption: Option[Type]) = {
@@ -1800,7 +1837,6 @@ object Dol {
         res.assignedTypeOption = typeOption
         res
       }
-      def withType(typ: Type) = withTypeOption(Some(typ))
     }
 
     def termFuture(f: ((Term) => Unit) => Unit) = this.TermFuture(contFuture(f))
@@ -1893,6 +1929,7 @@ object Dol {
     try {
       Some(NoFuture.typecheckTerm(symbolUniverse, rootExpr, rootPrototype, rootScope))
     } catch {
+      case e: TypecheckError => e.printStackTrace(); None
       case e: NotImplementedError => e.printStackTrace(); None
     }
   }

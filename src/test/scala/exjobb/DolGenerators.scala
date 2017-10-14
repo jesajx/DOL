@@ -17,6 +17,7 @@ import org.scalacheck.Shrink
 object DolGenerators {
   // (su, prototype) -> (term, scope, typedterm)
 
+  /* // TODO better?
   def genTerm(su: SymbolUniverse, scope: Scope, prototype: Prototype): (Term, Scope, TypedTerm) = ???
 
   def genLowerType(su: SymbolUniverse, scope: Scope, prototype: Prototype): (Scope, Type) = ???
@@ -64,5 +65,6 @@ object DolGenerators {
 
     (Fun(x, yType, term), scope3 - x, Fun(x, yType, typedTerm).withType(funType))
   }
+  */
 
 }
