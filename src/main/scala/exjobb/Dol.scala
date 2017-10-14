@@ -665,10 +665,10 @@ object Dol {
         case (Bot, FunType(x, _, _)) => gath(scope, FunType(x, Top, Bot), to, visitedUp, visitedDown, variance)
 
         case (RecType(x, xType), _) =>
-          if (!scope.contains(x)) ??? // TODO
+          if (scope.contains(x)) ??? // TODO
           gath(scope + (x -> xType), xType, to, visitedUp, visitedDown, variance)
         case (_, RecType(y, yType)) =>
-          if (!scope.contains(y)) ??? // TODO
+          if (scope.contains(y)) ??? // TODO
           gath(scope + (y -> yType), from, yType, visitedUp, visitedDown, variance)
 
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
@@ -1110,10 +1110,10 @@ object Dol {
 
         case (RecType(x, xType), _) =>
           if (scope.contains(x)) ??? // TODO generate new variable? eww...
-          inner(scope + (x -> xType), xType, second, visitedLeft, visitedRight)
+          inner(scope + (x -> xType), xType, second, visitedLeft, visitedRight) // TODO WRONG. must rename x to z, (z : first)
         case (_, RecType(y, yType)) =>
           if (scope.contains(y)) ??? // TODO generate new variable? eww...
-          inner(scope + (y -> yType), first, yType, visitedLeft, visitedRight)
+          inner(scope + (y -> yType), first, yType, visitedLeft, visitedRight) // TODO WRONG.  must rename y to w, (w : second)
 
         case (AndType(left, right), _) =>
           (inner(scope, left, second, visitedLeft, visitedRight)
