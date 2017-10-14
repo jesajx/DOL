@@ -25,7 +25,7 @@ object Dol {
 
   // TODO SUPER IDEA:
   //
-  //  Make scope global. x : T
+  //  Make scope global, x : T. (Local scope is a mapping into global scope).
   //
   //  Proving things in DOT is the same as x:T to x:D, for some type D.
   //  With COL this instead becomes the problem of raising x:T to x:P for some
@@ -33,10 +33,20 @@ object Dol {
   //
   //  THIS FORMS A LATTICE.
   //
-  //  Basically store x->(Prototype,Variance) in a cell, and then "refine" to x->(Type,Variance).
+  //  Basically store (x, Prototype, Variance) in a cell, and then "refine" to (x, Type, Variance).
   //
-  // The typechecker essentially creates symbols and prototypes. Constraints
-  // could be thought of as merging (writing) or checking (read, but no write) prototypes.
+  // The typechecker essentially creates symbols and prototypes.
+  // Constraints are basically raising (x1,T1,v1) into (x2,P2,v2).
+  //
+  // possible premise
+  //  x: T    (may not be fully known yet)
+  // possible constraint
+  //  z: D s.t. raise([x := z]T, P) = D
+  //  z: D s.t. lower([x := z]T, P) = D
+  //
+  // if x:FunType(a#,b#) then a# and b# can be computed independently. This
+  // may not be true if we instead have an AndType.
+  //
   //
 
 
