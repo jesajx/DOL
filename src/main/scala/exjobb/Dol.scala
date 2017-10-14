@@ -21,6 +21,30 @@ object Dol {
 
   class TypecheckError(s: String = "typecheck error") extends Exception(s)
 
+
+
+  // TODO SUPER IDEA:
+  //
+  //  Make scope global. x : T
+  //
+  //  Proving things in DOT is the same as x:T to x:D, for some type D.
+  //  With COL this instead becomes the problem of raising x:T to x:P for some
+  //  prototype P.
+  //
+  //  THIS FORMS A LATTICE.
+  //
+  //  Basically store x->(Prototype,Variance) in a cell, and then "refine" to x->(Type,Variance).
+  //
+  // The typechecker essentially creates symbols and prototypes. Constraints
+  // could be thought of as merging (writing) or checking (read, but no write) prototypes.
+  //
+
+
+
+
+
+
+
   // TODO Idea: Maybe treat entire typechecker as a constraint-solver and
   // typecheck in two steps: 1) gather constraints, 2) solve them. This is
   // similar what I tried with Hindley-Milner. Technically this is actually
@@ -405,7 +429,7 @@ object Dol {
           inner(scope, lhs, bLowerType, visitedLeft, visitedRight + bProj)
 
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
-          inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight) // TODO WRONG
+          inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight)
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
           val argType = andType(xType, yType)
           val resType = inner(scope + (x -> argType), xResType, yResType, visitedLeft, visitedRight)
@@ -809,7 +833,7 @@ object Dol {
       case (Fun(x, _, _), Top) =>
         typecheckTerm(su, term, FunType(x, Bot, Top), scope)
       case (Fun(x, _, _), FunType(y, _, _)) if x != y =>
-        val typedTerm = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope) // TODO WRONG
+        val typedTerm = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope)
         val typ = typedTerm.assignedType
         typedTerm.withType(typeRenameBoundVarAssumingNonFree(y, typ))
       case (Fun(x, xType, resTerm), FunType(y, argPrototype, resPrototype)) if x == y =>
@@ -914,9 +938,8 @@ object Dol {
         typ
     }
 
-
     def typeRenameBoundVarAssumingNonFree(toVar: Symbol, typ: Type): Type = {
-      if (isVarFreeIn(toVar, typ)) ???
+      if (isVarFreeIn(toVar, typ)) ??? // TODO Caller's responsibility?
       typ match {
         case RecType(x, xType) if x != toVar =>
           RecType(toVar, typeRenameVar(x, toVar, xType))
@@ -926,6 +949,7 @@ object Dol {
           typ
       }
     }
+
     def termRenameBoundVarAssumingNonFree(toVar: Symbol, term: Term): Term ={
       if (isVarFreeIn(toVar, term)) ???
       term match {
@@ -1075,9 +1099,11 @@ object Dol {
           inner(scope, first, bLowerType, visitedLeft, visitedRight + bProj)
 
         case (RecType(x, xType), _) =>
-          inner(scope, xType, second, visitedLeft, visitedRight)
+          if (scope.contains(x)) ??? // TODO generate new variable? eww...
+          inner(scope + (x -> xType), xType, second, visitedLeft, visitedRight)
         case (_, RecType(y, yType)) =>
-          inner(scope, first, yType, visitedLeft, visitedRight)
+          if (scope.contains(y)) ??? // TODO generate new variable? eww...
+          inner(scope + (y -> yType), first, yType, visitedLeft, visitedRight)
 
         case (AndType(left, right), _) =>
           (inner(scope, left, second, visitedLeft, visitedRight)
@@ -1087,7 +1113,8 @@ object Dol {
             && inner(scope, first, right, visitedLeft, visitedRight))
 
         case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
-          inner(scope, first, typeRenameBoundVarAssumingNonFree(x, second), visitedLeft, visitedRight) // TODO WRONG
+          (!isVarFreeInType(x, second)
+            && inner(scope, first, typeRenameBoundVarAssumingNonFree(x, second), visitedLeft, visitedRight))
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
           (inner(scope, yType, xType, visitedRight, visitedLeft)
             && inner(scope, xResType, yResType, visitedLeft, visitedRight))

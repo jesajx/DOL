@@ -15,6 +15,7 @@ import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
 
 object DolSpec extends Properties("DolSpec") {
+  // TODO some ideas: <http://www.michaelburge.us/2017/09/27/delta-debugging-in-haskell.html>
 
   // TODO Include type sizes in Gen size?
 
