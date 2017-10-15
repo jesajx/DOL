@@ -38,23 +38,6 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
   //}
 
 
-  property("NoFuture.projectUpperType") = {
-    val su = new SymbolUniverse()
-    val generator: Gen[(Scope, Symbol, Symbol, Type)] = for {
-      x <- const(su.newSymbol())
-      a <- const(su.newSymbol())
-      scope <- genScope(su)
-      (newScope, aUpperType) <- genType(su, scope)
-      aLowerType <- genSubtype(su, newScope, aUpperType, Set())
-      newScope <- const(Map(x -> TypeDecl(a, aLowerType, aUpperType)))
-    } yield (newScope, x, a, aUpperType)
-    // TODO test multiple declarations (should result in AndType)
-    Prop.forAllNoShrink(generator) {case (scope, x, a, aUpperType) =>
-      val res = NoFuture.typeProjectUpper(scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(scope, res.get, aUpperType))
-    }
-  }
-
 
   // TODO raise type to exact prototype (i.e. supertype of type)
 
@@ -87,6 +70,37 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
 //  }
 
 
+//  property("positiveSequentialInferenceProblem") = {
+//    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem) { case (su, problem) =>
+//      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
+//
+//      val resString = res match {
+//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+//        case None => "res = None"
+//      }
+//
+//      resString |: Prop.all(
+//        res != None && NoFuture.equalTerms(problem.scope, res.get, problem.expected))
+//    }
+//  }
+
+  // TODO
+//  property("positiveParallelInferenceProblem") = {
+//    val su = new SymbolUniverse()
+//    val generator: Gen[InferenceProblem] = genInferenceProblem(su, Map())
+//    val shrink: InferenceProblem => Stream[InferenceProblem] = shrinkInferenceProblem(su, _, isRoot=true)
+//    Prop.forAllShrink(generator, shrink) { (problem: InferenceProblem) =>
+//      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
+//
+//      val resString = res match {
+//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+//        case None => "res = None"
+//      }
+//
+//      resString |: Prop.all(
+//        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
+//    }
+//  }
 
 
   // TODO To be more FP-pure, the symboluniverse should probably be wrapped

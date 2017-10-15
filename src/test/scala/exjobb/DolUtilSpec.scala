@@ -21,7 +21,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   property("NoFuture.allVarsAndMembersInType = disjoinUnion(allFreeVarsInType, allBoundVarsInType, allFieldMemberSymbolsInType, allTypeMemberSymbolsInType)") = {
     val generator: Gen[(SymbolUniverse, (Scope, Type))] = withSymbolUniverse{genType(_, Map())}
-    Prop.forAllNoShrink(generator){pretty{case (su, (scope, typ)) =>
+    Prop.forAllNoShrink(generator){prettyProp{case (su, (scope, typ)) =>
       val expectedAllVars = (0 until su.count()).toSet
 
       val allVars      = NoFuture.allVarsAndMembersInType(typ)
@@ -41,7 +41,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       }.toMap
 
 
-      val label = pprint.apply(Map(
+      val label = pretty(Map(
         "typ            " -> typ,
         "expectedAllVars" -> expectedAllVars,
         "allVars        " -> allVars,
@@ -50,7 +50,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
         "fieldMembers   " -> fieldMembers,
         "typeMembers    " -> typeMembers,
         "counts         " -> counts
-      )).render
+      ))
 
 
       label |: Prop.all(
@@ -69,7 +69,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (newScope, lower) <- genType(su, scope)
       upper <- genSupertype(su, newScope, lower, Set())
     } yield (newScope + (x -> lower), x, upper)
-    Prop.forAllNoShrink(generator){pretty{ case (newScope, x, upper) =>
+    Prop.forAllNoShrink(generator){prettyProp{ case (newScope, x, upper) =>
       NoFuture.varIsSubtypeOf(newScope, x, upper)
     }}
   }
@@ -81,7 +81,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       x <- Gen.oneOf((NoFuture.allFreeVarsInType(typ) + su.newSymbol()).toSeq) // NOTE: x != y. Had to check scalacheck src to know that....
       y <- Gen.oneOf(((NoFuture.allFreeVarsInType(typ) + x) + su.newSymbol()).toSeq)
     } yield (su, scope, x, y, typ)
-    Prop.forAllNoShrink(generator){pretty{ case (su, scope, x, y, typ) =>
+    Prop.forAllNoShrink(generator){prettyProp{ case (su, scope, x, y, typ) =>
       val res  = NoFuture.typeRenameVar(x, y, typ)
       val res2 = NoFuture.typeRenameVar(y, x, res)
 
@@ -97,4 +97,60 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       )
     }
   }}
+
+
+  property("NoFuture.typeProjectUpper -- single") = {
+    val su = new SymbolUniverse()
+    val generator: Gen[(Scope, Symbol, Symbol, Type)] = for {
+      x <- const(su.newSymbol())
+      a <- const(su.newSymbol())
+      scope <- genScope(su)
+      (newScope, aUpperType) <- genType(su, scope)
+      aLowerType <- genSubtype(su, newScope, aUpperType, Set())
+      newScope <- const(Map(x -> TypeDecl(a, aLowerType, aUpperType)))
+      // TODO test multiple TypeDecls
+      // TODO test inbetween typeprojs
+      // TODO test rectypes
+    } yield (newScope, x, a, aUpperType)
+    // TODO test multiple declarations (should result in AndType)
+    Prop.forAllNoShrink(generator){prettyProp{case (scope, x, a, aUpperType) =>
+      val res = NoFuture.typeProjectUpper(scope, x, a)
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(scope, res.get, aUpperType))
+    }}
+  }
+
+  property("NoFuture.typeProjectUpper -- multi") = {
+    val su = new SymbolUniverse()
+    val generator: Gen[(Scope, Symbol, Symbol, Type)] = for {
+      x <- const(su.newSymbol())
+      a <- const(su.newSymbol())
+      scope <- genScope(su)
+      (scope2, aUpperType1) <- genType(su, scope)
+      aLowerType1 <- genSubtype(su, scope2, aUpperType1, Set())
+
+      (scope3, aUpperType2) <- genType(su, scope2)
+      aLowerType2 <- genSubtype(su, scope3, aUpperType2, Set())
+
+      decl1 <- TypeDecl(a, aLowerType1, aUpperType1)
+      decl2 <- TypeDecl(a, aLowerType2, aUpperType2)
+      scope4 <- const(scope3 + (x -> AndType(decl1, decl2)))
+
+      // TODO test multiple TypeDecls
+      // TODO test inbetween typeprojs
+      // TODO test rectypes
+    } yield (scope4, x, a, AndType(aUpperType1, aUpperType2))
+    // TODO test multiple declarations (should result in AndType)
+    Prop.forAllNoShrink(generator){prettyProp{case (scope, x, a, aUpperType) =>
+      val res = NoFuture.typeProjectUpper(scope, x, a)
+      val resLabel = prettyNamed("res", res)
+      resLabel |: Prop.all(res != None && NoFuture.equalTypes(scope, res.get, aUpperType))
+    }}
+  }
+
+
+  // TODO typeProjectUpper: result does not contains rectypes.
+  // TODO typeProjectUpper
+  // TODO typeProjectLower
+  // TODO glb
+  // TODO lub
 }

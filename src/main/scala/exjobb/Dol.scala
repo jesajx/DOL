@@ -20,15 +20,9 @@ object Dol {
   type Symbol = Int
   type SymbolPath = Seq[Symbol]
 
-  class TypecheckError(s: String = "typecheck error") extends Exception(s)
+  class TypecheckingError(s: String = "error typechecking") extends Exception(s)
 
-  // TODO DISCOVERY: Recursive types may not be nested. There is not <:-rule
-  // for rectypes.
-
-  // TODO Write "proper" doc comments? e.g. reference method parameters like
-  // {@code myParam}?
-
-  // TODO SUPER IDEA:
+  // TODO INTERESTING IDEA:
   //
   //  Make scope global, x : T. (Local scope is a mapping into global scope).
   //
@@ -259,29 +253,23 @@ object Dol {
     // declarations of "a", return the greatestCommonSubtype of the upper bounds.
     // TODO allow callers to supply visitedSet?
     // TODO can we get rid of the SymbolUniverse somehow?
-    def typeProjectUpper(scope: Scope, x: Symbol, a: Symbol): Option[Type] = {
+    def typeProjectUpper(scope: Scope, x: Symbol, a: Symbol, visited: Set[TypeProj] = Set()): Option[Type] = {
       // NOTE: The result may still reference the original TypeProjection.
       // E.g. upper(x.a) = y.b and upper(y.b) = x.a. But the caller may want
       // to see y.b. Therefore we do not upcast here.
       def inner(scope: Scope, typ: Type, a: Symbol, visited: Set[TypeProj]): Option[Type] = typ match {
         case RecType(y, yType) =>
-          for {
-            yAUpperType <- inner(scope + (y -> yType), yType, a, visited)
-          } yield typeRenameVar(y, x, yAUpperType) // TODO is this correct? will it not add meaning to yAType? Better to eliminate y?
+          inner(scope, typeRenameVar(y, x, yType), a, visited)
         case AndType(left, right) =>
-          val leftUpperOption = inner(scope, left, a, visited)
-          val rightUpperOption = inner(scope, right, a, visited)
-          (leftUpperOption, rightUpperOption) match {
-            case (Some(leftUpper), Some(rightUpper)) => Some(andType(leftUpper, rightUpper))
-            case (Some(leftUpper), None)             => Some(leftUpper)
-            case (None, Some(rightUpper))            => Some(rightUpper)
-            case (None, None)                        => None
-          }
-        case bProj @ TypeProj(y, b) if visited(bProj) =>
-          None
-        case bProj @ TypeProj(y, b) if !visited(bProj) =>
+          List(
+            inner(scope, left, a, visited),
+            inner(scope, right, a, visited)
+          ).flatten.reduceOption{andType(_,_)}
+        case bProj @ TypeProj(y, b) =>
           for {
+            yes <- Some(visited(bProj)) if !yes
             yType <- Some(scope.getOrElse(y, {error()}))
+            // TODO maybe typeRenameVar(y, x, yType)? Is x.T == y.T?
             bUpperType <- inner(scope, yType, b, visited + bProj)
             aUpperType <- inner(scope, bUpperType, a, visited + bProj)
           } yield aUpperType
@@ -291,7 +279,7 @@ object Dol {
       }
       for {
         xType <- scope.get(x)
-        aUpperType <- inner(scope, xType, a, Set()) // TODO use Set(TypeProj(x, a)) right away?
+        aUpperType <- inner(scope, xType, a, visited) // TODO use Set(TypeProj(x, a)) right away?
       } yield aUpperType
     }
 
@@ -804,7 +792,7 @@ object Dol {
     }
 
 
-    def error() = {throw new TypecheckError(); ErrorType}
+    def error() = {throw new TypecheckingError(); ErrorType}
 
     def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): TypedTerm = (term, prototype) match {
       case (Var(x), p) =>
@@ -1109,8 +1097,7 @@ object Dol {
     // are "valid" for some sense of valid.
 
     /** Get rid of any (RecType(y, yType)) in typ by renaming y to x.
-     *  RecTypes may be nested inside AndTypes, but may not be nested anywhere
-     *  else (ignored by this function).
+     * Only searches immediate AndTypes. Any nested RecTypes are ignored.
      */
     def eliminateRecursiveTypes(typ: Type, x: Symbol): Type = typ match {
       case RecType(y, yType) =>
@@ -1122,13 +1109,204 @@ object Dol {
         AndType(
           eliminateRecursiveTypes(left, x),
           eliminateRecursiveTypes(right, x))
-      case typ => typ // NOTE: recursive type may not be nested.
+      case typ => typ
     }
 
     // TODO Should there be a fixRecursiveTypeProjections? No? There may e.g.
     // be circular references between TypeProjs and that info may be necessary
     // in some cases. For example, probably can't rewrite:
     //    {x.T: x.D..x.D}&{x.D: x.T..x.T}.
+
+
+    /** Replace each Que in x:prototype with a TypeProj(z,_).
+     *
+     * The Que is replaced with TypeProj(z, k), where k is a number unique to
+     * that Que.
+     *
+     * If z is already in scope, an exception is thrown.
+     */
+    def varPrep(scope: Scope, z: Symbol, x: Symbol, prototype: Prototype): (Int, Type) = {
+//      final case class State(projs: Set[TypeProj], typ: Type) { // TODO Cool, but overkill. Unless.... it can be reused across functions?
+//        def map(f: Type => Type): State = State(projs, f(typ))
+//        def flatMap(f: (Type) => State): State = {
+//          val second  = f(typ)
+//          State(projs ++ second.projs, second.typ)
+//        }
+//        def toTraversable: Traversable[Type] = List(typ)
+//      }
+//      def doTwo(a: Prototype, b: Prototype)(f: (Type, Type) => Type): State = for {
+//        newA <- inner(a) ;
+//        newB <- inner(b)
+//      } yield f(newA, newB)
+//      def inner(prototype: Prototype): State = prototype match {
+//        case Que =>
+//          val proj = TypeProj(z, su.newSymbol())
+//          State(Set(proj), proj)
+//        case AndType(left, right)        => doTwo(left, right){AndType(_, _)}
+//        case FunType(x, xType, xResType) => doTwo(xType, xResType){FunType(x, _, _)}
+//        case FieldDecl(a, aType)         => inner(aType).map{FieldDecl(a, _)}
+//        case TypeDecl(a, aLowerType, aUpperType) => doTwo(aLowerType, aUpperType){TypeDecl(a, _, _)}
+//        case RecType(x, xType) => throw new TypecheckingError("nested RecType")
+//        case _ => State(Set(), prototype)
+//      }
+//      val State(projSet, typ) = inner(eliminateRecursiveTypes(prototype, x))
+//      (projSet, typ)
+      def inner(count: Int, prototype: Prototype): (Int, Type) = prototype match {
+        case RecType(x, xType) => throw new TypecheckingError("nested RecType")
+        case Que =>
+          val proj = TypeProj(z, count)
+          (count + 1, proj)
+        case AndType(left, right) =>
+          val (count2, leftType)   = inner(count, left)
+          val (count3, rightType) = inner(count2, right)
+          (count3, andType(leftType, rightType))
+        case FunType(x, xType, xResType) =>
+          val (count2, newXType)    = inner(count, xType)
+          val (count3, newXResType) = inner(count2, xResType)
+          (count3, FunType(x, newXType, newXResType))
+        case FieldDecl(a, aType) =>
+          val (count2, newAType) = inner(count, aType)
+          (count2, FieldDecl(a, newAType))
+        case TypeDecl(a, aLowerType, aUpperType) =>
+          val (count2, newLowerType)  = inner(count, aLowerType)
+          val (count3, newUpperType) = inner(count2, aUpperType)
+          (count3, TypeDecl(a, newLowerType, newUpperType))
+        case _ => (count, prototype)
+      }
+      if (scope.contains(z))
+        throw new TypecheckingError(s"var $z is already in use")
+      inner(0, eliminateRecursiveTypes(prototype, x))
+    }
+
+    def varGather(scope: Scope, r: Symbol, z: Symbol, upper: Type, variance: Variance): Constraint = {
+      // TODO Instead of passing down variance, maybe just flip the order of
+      // from and to? (from,to) -> (to, from)?
+      def solveSet(proj: TypeProj): Boolean = proj.x == r
+      def gath(scope: Scope, from: Type, to: Type, visitedUp: Set[TypeProj], visitedDown: Set[TypeProj], variance: Variance): Constraint = {
+        def rec(scope: Scope = scope, from: Type = from, to: Type = to, visitedUp: Set[TypeProj] = visitedUp, visitedDown: Set[TypeProj] = visitedDown, variance: Variance = variance) = gath(scope, from, to, visitedUp, visitedDown, variance)
+        (from, to) match {
+          case (_: RecType, _) | (_, _: RecType) =>  throw new TypecheckingError("nested RecType")
+
+          case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
+          case (Bot, FieldDecl(a, aType)) => rec(from=FieldDecl(a, Bot))
+
+          case (Bot, TypeDecl(a, aLowerType, aUpperType)) => ??? // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
+          case (TypeDecl(a, aLowerType, aUpperType), Top) => rec(to=TypeDecl(a, Bot, Top))
+
+          case (FunType(x, _, _), Top) => rec(to=FunType(x, Bot, Top))
+          case (Bot, FunType(x, _, _)) => rec(from=FunType(x, Top, Bot))
+
+
+          case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
+            rec(to=typeRenameBoundVarAssumingNonFree(x, to))
+
+          case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
+            andConstraint(
+              rec(from=yType, to=xType),
+              rec(scope = scope+(x -> yType), from=xResType, to=yResType))
+
+          case (_, AndType(left, right)) =>
+            andConstraint(
+              rec(to=left),
+              rec(to=right))
+
+          case (AndType(left, right), _) =>
+            // TODO factor duplicate declarations first? AndType(FieldDef(a,A), FieldDef(a,B)) --> FieldDef(a, AndType(A,B))
+            // probably a bad idea in case of typeprojs...
+            orConstraint(
+              rec(from=left),
+              rec(from=right)) // TODO can we avoid the or by expanding further somehow? e.g. min(leftC,rightC)
+
+          case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b))  =>
+            if (aProj == bProj) {
+              TrueConstraint
+            } else if (solveSet(aProj) && solveSet(bProj)) {
+              FalseConstraint
+            } else if (solveSet(aProj) && !solveSet(bProj)) {
+              val bLower = ??? // TODO get rid of other type-projections in solveSet.
+              SubtypeConstraint(scope, from, bLower, variance)
+            } else if (!solveSet(aProj) && solveSet(bProj)) {
+              val aUpperType = ??? // TODO get rid of other type-projections in solveSet.
+              SubtypeConstraint(scope, aUpperType, to, variance) // TODO correct? vs reverse?
+            } else { // if (!solveSet(aProj) && !solveSet(bProj))
+              val aUpperType = if (visitedUp(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+              val bLowerType = if (visitedDown(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+
+              orConstraint(
+                rec(from=aUpperType, visitedUp = visitedUp+aProj),
+                rec(to=bLowerType, visitedDown = visitedDown+bProj))
+            }
+
+          case (aProj @ TypeProj(x, a), _) =>
+            if (solveSet(aProj)) {
+              val bLower = to // TODO get rid of all type-projections?
+              SubtypeConstraint(scope, from, bLower, variance)
+            } else {
+              val aUpperType = if (visitedUp(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+              rec(from=aUpperType, visitedUp = visitedUp+aProj)
+            }
+
+          case (_, bProj @ TypeProj(y, b)) =>
+            if (solveSet(bProj)) {
+              val aUpperType = from // TODO get rid of all type-projections?
+              SubtypeConstraint(scope, aUpperType, to, variance)
+            } else {
+              val bLowerType = if (visitedDown(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+              rec(to=bLowerType, visitedDown = visitedDown+bProj)
+            }
+
+          case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b => gath(scope, aType, bType, visitedUp, visitedDown, variance)
+
+          case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
+            andConstraint(
+              rec(from=bLowerType, to=aLowerType, variance=reverseVariance(variance)),
+              rec(from=aUpperType, to=bUpperType))
+
+          case (Top, Top) => TrueConstraint
+          case (Bot, Top) => TrueConstraint
+          case (Bot, Bot) => TrueConstraint
+
+          case _ => FalseConstraint
+        }
+      }
+      val zType      = eliminateRecursiveTypes(scope(z), z)
+      val zUppertype = eliminateRecursiveTypes(upper, z)
+      if (variance == Contravariant)
+        gath(scope, zUppertype, zType, Set(), Set(), variance)
+      else
+        gath(scope, zType, zUppertype, Set(), Set(), variance)
+    }
+
+    // TODO What happens when we raise to AndType(Que, _)? Is the Que redundant? Should it be skipped?
+
+    /** Find subtype/supertype T of scope(x) that matches prototype.
+     * If variance is Covariant, T is the least supertype of scope(x) that
+     * matches.
+     * If variance is Contravariant, T is the gratest subtype of scope(x) that
+     * matches.
+     * TODO explain Invariant, ConstantVariance.
+     * Return None if T does not exists.
+     */
+    def varMatch(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype, variance: Variance): Option[Type] = {
+      val recFreePrototype = eliminateRecursiveTypes(prototype, z)
+      val (numQues, labeledPrototype) = varPrep(scope, r, z, prototype)
+      val constraint = varGather(scope, r, z, labeledPrototype, variance)
+      val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
+      for {
+        solution <- solveConstraint(???, solveSet, constraint) // TODO is su necessary?
+      } yield applyConstraintSolution(labeledPrototype, solution)
+    }
+
+    /** Least supertype T of scope(x) such that T matches prototype.
+     * Return None if T does not exists.
+     */
+    def varRaise(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = varMatch(scope, r, z, prototype, Covariant)
+
+    /** Greatest subtype T of scope(x) such that T matches prototype.
+     * Return None if T does not exists.
+     */
+    def varLower(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = varMatch(scope, r, z, prototype, Contravariant)
+
 
     /** Check if scope(x) <: subtype.
      *  Formally, x: xType, xType <: To.
@@ -1171,8 +1349,10 @@ object Dol {
             !isVarFreeInType(x, second) && r(second=typeRenameBoundVarAssumingNonFree(x, second))
 
           case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
-            r(first=yType, second=xType) && r(scope=scope + (x -> yType), first=xResType, second=yResType)
-
+            (r(first=yType, second=xType)
+              && r(scope = scope+(x -> yType), first=xResType, second=yResType))
+          case (_: RecType, _) | (_, _: RecType) =>
+            throw new TypecheckingError("nested rectype") // TODO Is this always forbidden? Special case?
           case _ => false
         }
       }
@@ -1186,7 +1366,7 @@ object Dol {
     def isSubtypeOf(scope: Scope, first: Type, second: Type): Boolean = { // TODO REM. use varIsSubtypeOf instead.
       def inner(scope: Scope, first: Type, second: Type, visitedLeft: Set[TypeProj], visitedRight: Set[TypeProj]): Boolean = (first, second) match {
         case (_: RecType, _) | (_, _: RecType) =>
-          throw new TypecheckError("nested RecType")
+          throw new TypecheckingError("nested RecType")
 
         case (Bot, _) => true
         case (_, Top) => true
@@ -2056,7 +2236,7 @@ object Dol {
     try {
       Some(NoFuture.typecheckTerm(symbolUniverse, rootExpr, rootPrototype, rootScope))
     } catch {
-      case e: TypecheckError => e.printStackTrace(); None
+      case e: TypecheckingError => e.printStackTrace(); None
       case e: NotImplementedError => e.printStackTrace(); None
     }
   }

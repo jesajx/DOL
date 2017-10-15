@@ -542,7 +542,17 @@ object DolGenerators {
   } yield (su, res)
 
 
-  def pretty[A](f: A => Prop)(x: A): Prop = {
-    ("input = " ++ pprint.apply(x).render) |: Prop.protect(f(x))
+  val pprintTerminalWidth = 80
+  val pprintSbtLogPrefix = "[info] "
+  val pprintWidth = pprintTerminalWidth - pprintSbtLogPrefix.size
+
+  def prettyNamed[T](name: String, x: T): String = {
+    val prefix = name + " = "
+    prefix + pprint.apply(x, width=pprintWidth, initialOffset = prefix.size).render
   }
+
+  def pretty[T](x: T): String = pprint.apply(x, width=pprintWidth).render
+
+  def prettyProp[A](f: A => Prop)(x: A): Prop =
+    prettyNamed("input", x) |: Prop.protect(f(x))
 }
