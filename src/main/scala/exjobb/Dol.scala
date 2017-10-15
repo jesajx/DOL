@@ -15,13 +15,18 @@ import scala.annotation.tailrec
 import scala.util.{Failure, Success, Try}
 import scala.collection.mutable
 
+// TODO move into "dol" package and call divide into multiple files?
 object Dol {
   type Symbol = Int
   type SymbolPath = Seq[Symbol]
 
   class TypecheckError(s: String = "typecheck error") extends Exception(s)
 
+  // TODO DISCOVERY: Recursive types may not be nested. There is not <:-rule
+  // for rectypes.
 
+  // TODO Write "proper" doc comments? e.g. reference method parameters like
+  // {@code myParam}?
 
   // TODO SUPER IDEA:
   //
@@ -48,7 +53,6 @@ object Dol {
   // may not be true if we instead have an AndType.
   //
   //
-
 
 
 
@@ -241,6 +245,12 @@ object Dol {
 
   def pairToList[T](pair: (T, T)): List[T] = List(pair._1, pair._2)
   def max(rest: Int*): Int = rest.toList.max
+
+
+
+
+
+
 
   object NoFuture {
 
@@ -861,6 +871,7 @@ object Dol {
         }
       case (Obj(x, xType, defs), p) =>
         val localScope = scope + (x -> xType)
+        // TODO check that there are no duplicatesd
         def typecheckDef(d: Def): Def = d match {
           case AndDef(left, right) =>
             val typedLeft = typecheckDef(left)
@@ -891,14 +902,16 @@ object Dol {
         }
         // TODO check everything in xType is in defs
 
-        val typedDefs = typecheckDef(defs)
-        if (!isSubtypeOf(scope, typedDefs.assignedType, xType)) {
-          println(s"typedDefs.assignedType = ${typedDefs.assignedType}")
-          println(s"xType = $xType")
+        if (defHasDuplicates(defs)) {
           term.withType(error())
         } else {
-          val raisedType = raise(su, scope + (x -> xType), xType, p).getOrElse{error()}
-          Obj(x, xType, typedDefs).withType(raisedType)
+          val typedDefs = typecheckDef(defs)
+          if (!varIsSubtypeOf(scope + (x -> typedDefs.assignedType), x, xType)) {
+            term.withType(error())
+          } else {
+            val raisedType = raise(su, scope + (x -> xType), xType, p).getOrElse{error()}
+            Obj(x, xType, typedDefs).withType(raisedType)
+          }
         }
       // TODO DOL extensions to DOT
       case _ =>
@@ -1089,8 +1102,92 @@ object Dol {
       })
     }
 
-    def isSubtypeOf(scope: Scope, first: Type, second: Type): Boolean = {
+
+    // TODO def hasNestedRecursiveTypes(scope: Scope, x: Symbol)?
+    // TODO def validType?
+    // TODO scope should probably have an invariant that all contained types
+    // are "valid" for some sense of valid.
+
+    /** Get rid of any (RecType(y, yType)) in typ by renaming y to x.
+     *  RecTypes may be nested inside AndTypes, but may not be nested anywhere
+     *  else (ignored by this function).
+     */
+    def eliminateRecursiveTypes(typ: Type, x: Symbol): Type = typ match {
+      case RecType(y, yType) =>
+        // TODO do rename and rectype-elimination at the same time. i.e. pass
+        // down set of symbols equivalent to x?
+        // TODO Alternatively do all renames at end? renameAll(set(y,z,w) -> x)
+        eliminateRecursiveTypes(typeRenameVar(y, x, yType), x) // NOTE: it is fine for x to be free in yType.
+      case AndType(left, right) =>
+        AndType(
+          eliminateRecursiveTypes(left, x),
+          eliminateRecursiveTypes(right, x))
+      case typ => typ // NOTE: recursive type may not be nested.
+    }
+
+    // TODO Should there be a fixRecursiveTypeProjections? No? There may e.g.
+    // be circular references between TypeProjs and that info may be necessary
+    // in some cases. For example, probably can't rewrite:
+    //    {x.T: x.D..x.D}&{x.D: x.T..x.T}.
+
+    /** Check if scope(x) <: subtype.
+     *  Formally, x: xType, xType <: To.
+     */
+    def varIsSubtypeOf(scope: Scope, z: Symbol, supertype: Type): Boolean = {
+      def inner(scope: Scope, first: Type, second: Type, visitedLeft: Set[TypeProj], visitedRight: Set[TypeProj]): Boolean = {
+        // TODO Confirm whether r is efficient. I expect r to get inlined.
+        def r(scope: Scope = scope, first: Type = first, second: Type = second, visitedLeft: Set[TypeProj] = visitedLeft, visitedRight: Set[TypeProj] =
+          visitedRight) = inner(scope, first, second, visitedLeft, visitedRight)
+        (first, second) match {
+          case (Bot, _) => true
+          case (_, Top) => true
+          case (AndType(left, right), _) => r(first=left) || r(second=right)
+          case (_, AndType(left, right)) => r(first=left) && r(second=right)
+          case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b => r(first=aType, second=bType)
+
+          case (TypeDecl(a, aLower, aUpper), TypeDecl(b, bLower, bUpper)) if a == b =>
+           r(first=bLower, second=aLower) && r(first=aUpper, second=bUpper)
+
+          case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) =>
+            aProj == bProj || {
+              val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()} // TODO pass along visitedLeft to typeProjectUpper
+              // TODO eliminate rectypes!
+              r(first=aUpperType, visitedLeft=visitedLeft+aProj)
+            } || {
+              val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()} // TODO pass along visitedRight to typeProjectUpper
+              // TODO eliminate rectypes!
+              r(second=bLowerType, visitedRight=visitedRight+bProj)
+            }
+
+          case (aProj @ TypeProj(x, a), _) =>
+            val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+            r(first=aUpperType, visitedLeft = visitedLeft+aProj)
+          case (_, bProj @ TypeProj(y, b)) =>
+            val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+            r(second=bLowerType, visitedRight = visitedRight+bProj)
+
+          case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
+            // TODO is isVarFreeInType(x, second)-check necessary?
+            !isVarFreeInType(x, second) && r(second=typeRenameBoundVarAssumingNonFree(x, second))
+
+          case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
+            r(first=yType, second=xType) && r(scope=scope + (x -> yType), first=xResType, second=yResType)
+
+          case _ => false
+        }
+      }
+
+      val zType = eliminateRecursiveTypes(scope(z), z)
+      val zSupertype = eliminateRecursiveTypes(supertype, z)
+      inner(scope, zType, zSupertype, Set(), Set())
+    }
+
+    // TODO rename to: isSubtypeOfAssumingNoRecTypes?
+    def isSubtypeOf(scope: Scope, first: Type, second: Type): Boolean = { // TODO REM. use varIsSubtypeOf instead.
       def inner(scope: Scope, first: Type, second: Type, visitedLeft: Set[TypeProj], visitedRight: Set[TypeProj]): Boolean = (first, second) match {
+        case (_: RecType, _) | (_, _: RecType) =>
+          throw new TypecheckError("nested RecType")
+
         case (Bot, _) => true
         case (_, Top) => true
 
@@ -1107,13 +1204,6 @@ object Dol {
         case (_, bProj @ TypeProj(y, b)) =>
           val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
           inner(scope, first, bLowerType, visitedLeft, visitedRight + bProj)
-
-        case (RecType(x, xType), _) =>
-          if (scope.contains(x)) ??? // TODO generate new variable? eww...
-          inner(scope + (x -> xType), xType, second, visitedLeft, visitedRight) // TODO WRONG. must rename x to z, (z : first)
-        case (_, RecType(y, yType)) =>
-          if (scope.contains(y)) ??? // TODO generate new variable? eww...
-          inner(scope + (y -> yType), first, yType, visitedLeft, visitedRight) // TODO WRONG.  must rename y to w, (w : second)
 
         case (AndType(left, right), _) =>
           (inner(scope, left, second, visitedLeft, visitedRight)
@@ -1207,50 +1297,50 @@ object Dol {
       case _ => false
     }
 
-    def allVarsInType(typ: Type): Set[Symbol] = typ match {
-      case TypeProj(x, a) => Set(x)
+    def typeDfsSet[T](typ: Type)(f: Type => Set[T]): Set[T] = f(typ) ++ (typ match {
       case FunType(x, xType, resType) =>
-        allVarsInType(xType) ++ allVarsInType(resType) + x
+        typeDfsSet(xType)(f) ++ typeDfsSet(resType)(f)
       case RecType(x, xType) =>
-        allVarsInType(xType) + x
+        typeDfsSet(xType)(f)
       case FieldDecl(a, aType) =>
-        allVarsInType(aType)
+        typeDfsSet(aType)(f)
       case TypeDecl(a, aLowerType, aUpperType) =>
-        allVarsInType(aLowerType) ++ allVarsInType(aUpperType)
+        typeDfsSet(aLowerType)(f) ++ typeDfsSet(aUpperType)(f)
       case AndType(left, right) =>
-        allVarsInType(left) ++ allVarsInType(right)
-      case _ => Set() // Bot, Top, Que
+        typeDfsSet(left)(f) ++ typeDfsSet(right)(f)
+      case _ => Set() // Bot, Top, Que, TypeProj, ErrorType
+    })
+
+    def allTypeMemberSymbolsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
+      case TypeProj(_, a) => Set(a)
+      case TypeDecl(a, _, _) => Set(a)
+      case _ => Set()
     }
 
-    def boundVarsInType(typ: Type): Set[Symbol] = typ match {
-      case TypeProj(x, a) => Set()
-      case FunType(x, xType, resType) =>
-        boundVarsInType(xType) ++ boundVarsInType(resType) + x
-      case RecType(x, xType) =>
-        boundVarsInType(xType) + x
-      case FieldDecl(a, aType) =>
-        boundVarsInType(aType)
-      case TypeDecl(a, aLowerType, aUpperType) =>
-        boundVarsInType(aLowerType) ++ boundVarsInType(aUpperType)
-      case AndType(left, right) =>
-        boundVarsInType(left) ++ boundVarsInType(right)
-      case _ => Set() // Bot, Top, Que
+    def allFieldMemberSymbolsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
+      case FieldDecl(a, _) => Set(a)
+      case _ => Set()
     }
 
-    def freeVarsInType(typ: Type): Set[Symbol] = typ match {
-      case TypeProj(x, a) => Set(x)
-      case FunType(x, xType, resType) =>
-        freeVarsInType(xType) ++ (freeVarsInType(resType) - x)
-      case RecType(x, xType) =>
-        freeVarsInType(xType) - x
-      case FieldDecl(a, aType) =>
-        freeVarsInType(aType)
-      case TypeDecl(a, aLowerType, aUpperType) =>
-        freeVarsInType(aLowerType) ++ freeVarsInType(aUpperType)
-      case AndType(left, right) =>
-        freeVarsInType(left) ++ freeVarsInType(right)
-      case _ => Set() // Bot, Top, Que
+    def allBoundVarsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
+      case FunType(x, _, _) =>
+        Set(x)
+      case RecType(x, _) =>
+        Set(x)
+      case _ => Set()
     }
+
+    def allFreeVarsInType(typ: Type): Set[Symbol] = typeDfsSet[Symbol](typ) {
+      case TypeProj(x, _) => Set(x)
+      case _ => Set()
+    } -- allBoundVarsInType(typ)
+
+    def allVarsAndMembersInType(typ: Type): Set[Symbol] = Set(
+      allTypeMemberSymbolsInType(typ),
+      allFieldMemberSymbolsInType(typ),
+      allBoundVarsInType(typ),
+      allFreeVarsInType(typ)
+    ).flatten
 
     def stringExprWithType(expr: Expr): String = {
       val s = expr match {

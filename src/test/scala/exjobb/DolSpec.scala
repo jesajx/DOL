@@ -43,10 +43,11 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
     val generator: Gen[(Scope, Symbol, Symbol, Type)] = for {
       x <- const(su.newSymbol())
       a <- const(su.newSymbol())
-      aUpperType <- genType(su, Map()) // TODO populate scope?
-      aLowerType <- genSubtype(su, Map(), aUpperType, Set()) // TODO populate scope?
-      scope <- const(Map(x -> TypeDecl(a, aLowerType, aUpperType)))
-    } yield (scope, x, a, aUpperType)
+      scope <- genScope(su)
+      (newScope, aUpperType) <- genType(su, scope)
+      aLowerType <- genSubtype(su, newScope, aUpperType, Set())
+      newScope <- const(Map(x -> TypeDecl(a, aLowerType, aUpperType)))
+    } yield (newScope, x, a, aUpperType)
     // TODO test multiple declarations (should result in AndType)
     Prop.forAllNoShrink(generator) {case (scope, x, a, aUpperType) =>
       val res = NoFuture.typeProjectUpper(scope, x, a)

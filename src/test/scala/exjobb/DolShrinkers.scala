@@ -40,7 +40,7 @@ object DolShrinkers {
 
     def bfs(usedVars: Set[Symbol]): Set[Symbol] = {
       val reachable = usedVars.flatMap{x =>
-        NoFuture.freeVarsInType(problem.scope(x))
+        NoFuture.allFreeVarsInType(problem.scope(x))
       }
       val newUsedVars: Set[Symbol] = usedVars ++ reachable
       if (newUsedVars.size == usedVars.size)
