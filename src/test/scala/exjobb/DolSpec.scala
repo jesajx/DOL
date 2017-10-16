@@ -73,7 +73,16 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
   // TODO if x does not typecheck, then f(x) should not typecheck either.
 
   property("positiveSequentialInferenceProblem") = {
-    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem){prettyProp{ case (su, problem) =>
+    val generator: Gen[(SymbolUniverse, InferenceProblem)] = for{
+      su      <- const(new SymbolUniverse())
+      scope   <- genScope(su)
+      problem <- genInferenceProblem(su, scope)
+    } yield (su, problem)
+    def shrink(tuple: (SymbolUniverse, InferenceProblem)): Stream[(SymbolUniverse, InferenceProblem)] = {
+      val (su, problem) = tuple
+      shrinkInferenceProblem(su, problem, isRoot=true).map{newProblem => (su, newProblem)}
+    }
+    Prop.forAllShrink(generator, shrink){prettyProp{ case (su, problem) =>
       val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
 
       val resString = res match {

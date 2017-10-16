@@ -141,9 +141,4 @@ object DolShrinkers {
     //else
     res.map{shrinkScopeIfPossible}
   }
-
-  def shrinkSUAndInferenceProblem(tuple: (SymbolUniverse, InferenceProblem)): Stream[(SymbolUniverse, InferenceProblem)] = {
-    val (su, problem) = tuple
-    shrinkInferenceProblem(su, problem, isRoot=true).map{newProblem => (su, newProblem)}
-  }
 }
