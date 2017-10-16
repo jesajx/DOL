@@ -107,11 +107,11 @@ object DolGenerators {
       resSize <- subSize - argSize
       (argScope, arg) <- Gen.resize(argSize, genType(su, scope))
       (resScope, res) <- Gen.resize(resSize, genType(su, argScope + (x -> arg)))
-    } yield (resScope, FunType(x, arg, res))
+    } yield (resScope - x, FunType(x, arg, res))
   }
 
 
-  def genSupertype(su: SymbolUniverse, scope: Scope, subtype: Type, visited: Set[TypeProj]): Gen[Type] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
+  def genSupertype(su: SymbolUniverse, scope: Scope, subtype: Type, visited: Set[TypeProj] = Set()): Gen[Type] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
     if (size == 0)
       Gen.fail
     else if (size == 1) {
@@ -165,7 +165,7 @@ object DolGenerators {
     }
   }
 
-  def genSubtype(su: SymbolUniverse, scope: Scope, supertype: Type, visited: Set[TypeProj]): Gen[Type] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
+  def genSubtype(su: SymbolUniverse, scope: Scope, supertype: Type, visited: Set[TypeProj] = Set()): Gen[Type] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
     if (size == 0)
       Gen.fail
     else if (size <= 10) { // TODO bad!!! needs to be a bit bigger.
@@ -217,18 +217,60 @@ object DolGenerators {
     }
   }
 
-  def genTypeProj(su: SymbolUniverse, scope: Scope): Gen[(Scope, TypeProj)] = ??? // TODO
+  def genTypeProj(su: SymbolUniverse, scope: Scope): Gen[(Scope, TypeProj)] = Gen.sized{ size =>
+    // TODO NOTE: We run the risk of adding spilling the local scope into the
+    // global scope when  we do this. E.g. RecType(x, y.T), y ->
+    // TypeDecl(...., x.T).
+    // TODO when generating types, we need to differentiate localscope and
+    // global scope.
+    //
+    //val justMakeSomethingUp = for { // TODO sizes...
+    //  x <- const(su.newSymbol())
+    //  a <- const(su.newSymbol())
+    //  (scope2, aUpperType) <- genType(su, scope)
+    //  aLowerType <- genSubtype(su, scope2, aUpperType)
+    //  decl <- const(TypeDecl(a, aLowerType, aUpperType))
+    //  declSubtype <- genSubtype(su, scope2, decl)
+    //} yield (scope2 + (x -> declSubtype), TypeProj(x, a))
+    // TODO pick object from scope...
+
+    val typeMembersInScope = scope.flatMap{case (x, xType) =>
+      NoFuture.allDirectTypeMembers(scope, xType, Set()).map{
+        case a => TypeProj(x, a)
+      }
+    }.toSet.toSeq
+
+    if (typeMembersInScope.isEmpty) {
+      Gen.fail //justMakeSomethingUp
+    } else {
+      val grabSomethingFromScope = for {
+        p <- oneOf(typeMembersInScope)
+      } yield (scope, p)
+      //oneOf(justMakeSomethingUp, grabSomethingFromScope)
+      grabSomethingFromScope
+    }
+  }
+
+
+
+  // TODO genTypeWithoutScope and genType
 
   // TODO easier to generate normal types? genCanonicalType = canonicalize(genType)?
 
+  // TODO genAnyType: version of genType that may generate recursive types.
+
   // TODO allow genType to add types to scope? Gen[(Type, updatedScope)]
   def genType(su: SymbolUniverse, scope: Scope): Gen[(Scope, Type)] = Gen.sized { size =>
-    if (size == 0)
+    if (size <= 0)
       Gen.fail
-    else if (size == 1)
-      oneOf(const((scope, Top)), const((scope, Bot)))
+    else if (size <= 1)
+      oneOf(const((scope, Top)), const((scope, Bot)), genTypeProj(su, scope))
+    else if (size <= 2)
+      oneOf(const((scope, Top)), const((scope, Bot)), genTypeProj(su, scope),genNonRecObjType(su, scope))
     else
-      oneOf(const((scope, Top)), const((scope, Bot)), genFunType(su, scope))//, genSimpleRecObjType(su, scope)) // TODO genTypeProj
+      oneOf(const((scope, Top)), const((scope, Bot)), genFunType(su, scope), genTypeProj(su, scope), genSimpleRecObjType(su, scope), genNonRecObjType(su, scope))
+    // TODO genSimpleRecObjType?
+    // TODO genNonRecursiveObject
   }
 
 //  def nextSubtype(su: SymbolUniverse, scope: Scope, tp: CanonicalType): Stream[CanonicalType] = tp match {
@@ -298,8 +340,8 @@ object DolGenerators {
   def genVarInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = {
     val justMakeSomethingUp = for {
       x <- const(su.newSymbol())
-      (newScope, xType) <- genType(su, scope)
-    } yield InferenceProblem(Var(x), Que, newScope + (x -> xType), Var(x).withType(xType))
+      (scope2, xType) <- genType(su, scope)
+    } yield InferenceProblem(Var(x), Que, scope2 + (x -> xType), Var(x).withType(xType))
     if (scope.isEmpty) {
       justMakeSomethingUp
     } else {
@@ -322,9 +364,9 @@ object DolGenerators {
     val justMakeSomethingUp = for {
       x <- const(su.newSymbol())
       a <- const(su.newSymbol())
-      (newScope, aType) <- genType(su, scope)
+      (scope2, aType) <- genType(su, scope)
       xType <- const(FieldDecl(a, aType))
-    } yield InferenceProblem(Var(x), Que, newScope + (x -> xType), Var(x).withType(xType))
+    } yield InferenceProblem(Var(x), Que, scope2 + (x -> xType), Var(x).withType(xType))
     val fieldRefs = NoFuture.directFieldDeclsInScope(su, scope)
     if (fieldRefs.isEmpty) {
       justMakeSomethingUp
@@ -347,20 +389,20 @@ object DolGenerators {
     val genFieldDecl = for {
       n <- const(size) if n >= 2 // 1 for FieldDecl-node and 1 for aTerm.
       a <- const(su.newSymbol())
-      (newScope, aType) <- Gen.resize(n-1, genType(su, scope))
+      (scope2, aType) <- Gen.resize(n-1, genType(su, scope))
       myType     <- const(FieldDecl(a, aType))
-    } yield scopePush(newScope, z, myType)
+    } yield scopePush(scope2, z, myType)
 
     val genTypeDecl = for {
       n   <- const(size) if n >= 3 // 1 for TypeDecl-node, 1 for aLowerType and 1 for aUpperType.
       sub <- const(n - 1)
       upperSize <- Gen.choose(1, sub-1)
       lowerSize <- sub - upperSize
-      (newScope, aUpperType) <- Gen.resize(upperSize, genType(su, scope))
-      aLowerType <- Gen.resize(lowerSize, genSubtype(su, newScope, aUpperType, Set()))
+      (scope2, aUpperType) <- Gen.resize(upperSize, genType(su, scope))
+      aLowerType <- Gen.resize(lowerSize, genSubtype(su, scope2, aUpperType))
       a <- const(su.newSymbol())
       myType <- const(TypeDecl(a, aLowerType, aUpperType))
-    } yield scopePush(newScope, z, myType)
+    } yield scopePush(scope2, z, myType)
 
     val genDeclIntersection = for {
       n   <- const(size) if n >= 5 // 1 for AndDef and 2 for each side (since FieldDef and TypeDef needs atleast 2 each).
@@ -386,12 +428,51 @@ object DolGenerators {
     case None           => scope + (x -> anotherXType)
   }
 
+
+  def genNonRecObjType(su: SymbolUniverse, scope: Scope): Gen[(Scope, Type)] = Gen.sized{ size =>
+    val genFieldDecl = for {
+      n <- const(size) if n >= 2 // 1 for FieldDecl-node and 1 for aTerm.
+      a <- const(su.newSymbol())
+      (scope2, aType) <- Gen.resize(n-1, genType(su, scope))
+      myType     <- const(FieldDecl(a, aType))
+    } yield (scope2, myType)
+
+    val genTypeDecl = for {
+      n   <- const(size) if n >= 3 // 1 for TypeDecl-node, 1 for aLowerType and 1 for aUpperType.
+      sub <- const(n - 1)
+      upperSize <- Gen.choose(1, sub-1)
+      lowerSize <- sub - upperSize
+      (scope2, aUpperType) <- Gen.resize(upperSize, genType(su, scope))
+      aLowerType <- Gen.resize(lowerSize, genSubtype(su, scope2, aUpperType))
+      a <- const(su.newSymbol())
+      myType <- const(TypeDecl(a, aLowerType, aUpperType))
+    } yield (scope2, myType)
+
+    val genDeclIntersection = for {
+      n   <- const(size) if n >= 5 // 1 for AndDef and 2 for each side (since FieldDef and TypeDef needs atleast 2 each).
+      sub <- const(n - 1)
+      leftSize   <- Gen.choose(2, sub-2)
+      rightSize  <- const(sub - leftSize)
+      (leftScope, leftType)   <- Gen.resize(leftSize, genNonRecObjType(su, scope))
+      (rightScope, rightType)  <- Gen.resize(rightSize, genNonRecObjType(su, leftScope))
+    } yield (rightScope, AndType(leftType, rightType))
+
+    if (size >= 5)
+      oneOf(genFieldDecl, genTypeDecl, genDeclIntersection)
+    else if (size >= 3)
+      oneOf(genFieldDecl, genTypeDecl)
+    else if (size >= 2)
+      genFieldDecl
+    else
+      Gen.fail
+  }
+
   def genSimpleRecObjType(su: SymbolUniverse, scope: Scope): Gen[(Scope, Type)] = Gen.sized{ size =>
     // TODO subtract 1 from size for rectype?
     for {
       z <- const(su.newSymbol())
-      newScope <- genSimpleDecls(su, scope, z)
-    } yield (newScope, RecType(z, newScope(z)))
+      scope2 <- genSimpleDecls(su, scope, z)
+    } yield (scope2 - z, RecType(z, scope2(z)))
   }
 
 
@@ -408,9 +489,9 @@ object DolGenerators {
     val genTypeDef = for {
       n <- const(size) if n >= 2 // 1 for TypeDef-node and 1 for aType.
       a <- const(su.newSymbol())
-      (newScope, aType)      <- Gen.resize(n-1, genType(su, scope))
+      (scope2, aType)      <- Gen.resize(n-1, genType(su, scope))
       myType     <- const(TypeDecl(a, aType, aType))
-    } yield (TypeDef(a, aType), scopePush(newScope, z, myType), TypeDef(a, aType).withType(myType))
+    } yield (TypeDef(a, aType), scopePush(scope2, z, myType), TypeDef(a, aType).withType(myType))
 
     val genAndDef = for {
       n   <- const(size) if n >= 5 // 1 for AndDef and 2 for each side (since FieldDef and TypeDef needs atleast 2 each).
@@ -461,7 +542,7 @@ object DolGenerators {
       x <- const(su.newSymbol())
       y <- const(su.newSymbol())
       arg <- genInferenceProblem(su, scope)
-      argSupertype <- genSupertype(su, scope, arg.expectedType, Set())
+      argSupertype <- genSupertype(su, scope, arg.expectedType)
       res <- genInferenceProblem(su, scope + (x -> argSupertype))
       resType <- const(res.expectedType)
     } yield InferenceProblem(
@@ -484,7 +565,7 @@ object DolGenerators {
       val genFromScope = for {
         (f, FunType(x, xType, xResType)) <- oneOf(funsInScope.toSeq)
         y <- const(su.newSymbol()) // TODO vs picking y from scope?
-        yType <- genSubtype(su, scope, xType, Set())
+        yType <- genSubtype(su, scope, xType)
         appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
       } yield InferenceProblem(App(f, y), Que, scope + (y -> yType), App(f, y).withType(appResType))
       oneOf(genFromArg, genFromScope)
@@ -495,8 +576,8 @@ object DolGenerators {
 
   def genFunInferenceProblem(su: SymbolUniverse, scope: Scope): Gen[InferenceProblem] = for {
     x                 <- const(su.newSymbol)
-    (newScope, xType) <- genType(su, scope)
-    body              <- genInferenceProblem(su, newScope + (x -> xType))
+    (scope2, xType) <- genType(su, scope)
+    body              <- genInferenceProblem(su, scope2 + (x -> xType))
     prototype         <- const(if (body.prototype == Que) Que else FunType(x, Que, body.prototype))
   } yield InferenceProblem(Fun(x, xType, body.term), prototype, body.scope - x, Fun(x, xType, body.expected).withType(FunType(x, xType, body.expectedType)))
 
@@ -542,17 +623,4 @@ object DolGenerators {
   } yield (su, res)
 
 
-  val pprintTerminalWidth = 80
-  val pprintSbtLogPrefix = "[info] "
-  val pprintWidth = pprintTerminalWidth - pprintSbtLogPrefix.size
-
-  def prettyNamed[T](name: String, x: T): String = {
-    val prefix = name + " = "
-    prefix + pprint.apply(x, width=pprintWidth, initialOffset = prefix.size).render
-  }
-
-  def pretty[T](x: T): String = pprint.apply(x, width=pprintWidth).render
-
-  def prettyProp[A](f: A => Prop)(x: A): Prop =
-    prettyNamed("input", x) |: Prop.protect(f(x))
 }

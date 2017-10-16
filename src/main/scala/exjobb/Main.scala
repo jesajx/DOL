@@ -12,6 +12,13 @@ object Main {
 
     pprint.pprintln(problem)
     println(s"res = $res")
+
+
+  val cmp = NoFuture.equalTypes(new SymbolUniverse(10000), Map(),
+    AndType(FunType(2, Bot, FunType(3, Top, Bot)), FunType(4, Top, Top)),
+    AndType(FunType(2, Bot, FunType(3, Top, Bot)), FunType(4, Top, Top)))
+  pprint.pprintln(cmp)
+
   }
 
 //  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term)

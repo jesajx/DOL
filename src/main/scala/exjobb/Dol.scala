@@ -22,6 +22,8 @@ object Dol {
 
   class TypecheckingError(s: String = "error typechecking") extends Exception(s)
 
+  // TODO when matching on a type, maybe always list them in the same order?
+
   // TODO INTERESTING IDEA:
   //
   //  Make scope global, x : T. (Local scope is a mapping into global scope).
@@ -256,7 +258,7 @@ object Dol {
     def typeProjectUpper(scope: Scope, x: Symbol, a: Symbol, visited: Set[TypeProj] = Set()): Option[Type] = {
       // NOTE: The result may still reference the original TypeProjection.
       // E.g. upper(x.a) = y.b and upper(y.b) = x.a. But the caller may want
-      // to see y.b. Therefore we do not upcast here.
+      // to see y.b. Therefore we stop there.
       def inner(scope: Scope, typ: Type, a: Symbol, visited: Set[TypeProj]): Option[Type] = typ match {
         case RecType(y, yType) =>
           inner(scope, typeRenameVar(y, x, yType), a, visited)
@@ -266,24 +268,40 @@ object Dol {
             inner(scope, right, a, visited)
           ).flatten.reduceOption{andType(_,_)}
         case bProj @ TypeProj(y, b) =>
-          for {
-            yes <- Some(visited(bProj)) if !yes
-            yType <- Some(scope.getOrElse(y, {error()}))
-            // TODO maybe typeRenameVar(y, x, yType)? Is x.T == y.T?
-            bUpperType <- inner(scope, yType, b, visited + bProj)
-            aUpperType <- inner(scope, bUpperType, a, visited + bProj)
-          } yield aUpperType
+          typeProjectUpper(scope, y, b).map{inner(scope, _, a, visited + bProj)}.flatten
         case TypeDecl(b, _, bUpperType) if a == b => Some(bUpperType)
         case Bot => Some(Bot) // TODO <: TypeDecl(a, x.a..x.a) <: Top?
-        case _ => None
+        case _   => None
       }
       for {
         xType <- scope.get(x)
-        aUpperType <- inner(scope, xType, a, visited) // TODO use Set(TypeProj(x, a)) right away?
+        aUpperType <- inner(scope, xType, a, visited + TypeProj(x, a))
       } yield aUpperType
     }
 
-    def typeProjectLower(scope: Scope, x: Symbol, a: Symbol): Option[Type] = ???
+    def typeProjectLower(scope: Scope, x: Symbol, a: Symbol, visited: Set[TypeProj] = Set()): Option[Type] = {
+      // NOTE: The result may still reference the original TypeProjection.
+      // E.g. upper(x.a) = y.b and upper(y.b) = x.a. But the caller may want
+      // to see y.b. Therefore we stop there.
+      def inner(scope: Scope, typ: Type, a: Symbol, visited: Set[TypeProj]): Option[Type] = typ match {
+        case RecType(y, yType) =>
+          inner(scope, typeRenameVar(y, x, yType), a, visited)
+        case AndType(left, right) =>
+          List(
+            inner(scope, left, a, visited),
+            inner(scope, right, a, visited)
+          ).flatten.reduceOption{leastCommonSupertype(scope, _,_)}
+        case bProj @ TypeProj(y, b) =>
+          typeProjectUpper(scope, y, b).map{inner(scope, _, a, visited + bProj)}.flatten
+        case TypeDecl(b, bLowerType, _) if a == b => Some(bLowerType)
+        case Bot => Some(Bot) // TODO <: TypeDecl(a, x.a..x.a) <: Top?
+        case _   => None
+      }
+      for {
+        xType <- scope.get(x)
+        aUpperType <- inner(scope, xType, a, visited + TypeProj(x, a))
+      } yield aUpperType
+    }
 
     def optionUnion[A <: C, B <: C, C](a: Option[A], b: Option[B])(f: (A, B) => C): Option[C] = {
       (a, b) match {
@@ -392,49 +410,36 @@ object Dol {
     // TODO does lub and glb need to share visited? probably...
 
     // TODO reintroduce OrType? and have lub(a,b) = simplify(OrType(a, b))?
-    def leastCommonSupertype(su: SymbolUniverse, scope: Scope, lhs: Type, rhs: Type): Type = {
+    def leastCommonSupertype(scope: Scope, lhs: Type, rhs: Type): Type = {
       def inner(scope: Scope, lhs: Type, rhs: Type, visitedLeft: Set[TypeProj], visitedRight: Set[TypeProj]): Type = (lhs, rhs) match {
         case (Top, _) | (_, Top) => Top
         case (Bot, _) => rhs
         case (_, Bot) => lhs
-        case (ErrorType, _) | (_, ErrorType) =>
-          ErrorType
-
-        case (RecType(x, xType), _) =>
-          // TODO is this correct?
-          val newXType = inner(scope + (x -> xType), xType, rhs, visitedLeft, visitedRight)
-          val z = su.newSymbol()
-          recType(z, varEliminatingTransform(su, scope + (x -> xType) + (z -> newXType), x, z, newXType))
-        case (_, RecType(y, yType)) =>
-          // TODO is this correct?
-          val newYType = inner(scope + (y -> yType), lhs, yType, visitedLeft, visitedRight)
-          val z = su.newSymbol()
-          recType(z, varEliminatingTransform(su, scope + (y -> yType) + (z -> newYType), y, z, newYType))
+        case (ErrorType, _) | (_, ErrorType) => ErrorType
+        case (_: RecType, _: RecType) if (rigidEqualTypes(lhs, rhs)) => lhs
 
         case (AndType(left, right), _) =>
           andType(
             inner(scope, left, rhs, visitedLeft, visitedRight),
             inner(scope, right, rhs, visitedLeft, visitedRight))
-        case (_, AndType(left, right)) =>
-          andType(
-            inner(scope, lhs, left, visitedLeft, visitedRight),
-            inner(scope, lhs, right, visitedLeft, visitedRight))
+        case (_, AndType(_, _)) =>
+          inner(scope, rhs, lhs, visitedRight, visitedLeft)
 
         case (TypeProj(x, a), TypeProj(y, b)) if lhs == rhs => lhs
         case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) if lhs != rhs =>
           val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
-          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+          val bUpperType = if (visitedRight(bProj)) Bot else typeProjectUpper(scope, y, b).getOrElse{error()}
 
           andType(
             inner(scope, aUpperType, rhs, visitedLeft + aProj, visitedRight),
-            inner(scope, lhs, bLowerType, visitedLeft, visitedRight + bProj)) // TODO is this correct?
+            inner(scope, lhs, bUpperType, visitedLeft, visitedRight + bProj)) // TODO is this correct?
 
         case (aProj @ TypeProj(x, a), _) =>
           val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
           inner(scope, aUpperType, rhs, visitedLeft + aProj, visitedRight)
         case (_, bProj @ TypeProj(y, b))  =>
-          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
-          inner(scope, lhs, bLowerType, visitedLeft, visitedRight + bProj)
+          val bUpperType = if (visitedRight(bProj)) Bot else typeProjectUpper(scope, y, b).getOrElse{error()}
+          inner(scope, lhs, bUpperType, visitedLeft, visitedRight + bProj)
 
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
           inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight)
@@ -456,7 +461,7 @@ object Dol {
       inner(scope, lhs, rhs, Set(), Set())
     }
 
-    def greatestCommonSubtype(su: SymbolUniverse, scope: Scope, left: Type, right: Type): Type = andType(left, right) // TODO always correct? // TODO simplify?
+    def greatestCommonSubtype(scope: Scope, left: Type, right: Type): Type = andType(left, right) // TODO always correct? // TODO simplify?
 
     // TODO isSubtypeOf(scope, a, b)?
 
@@ -466,7 +471,7 @@ object Dol {
         mapUnion(left, right){case ((s1, l1, u1, v1), (s2, l2, u2, v2)) =>
           val commonScope = s1 ++ s2 // TODO will concatenating scopes work? If s1(x) == s2(x) and or "x" has otherwise been renamed... having different scopes seems wrong in the first place...
           val commonVariance = mergeVariance(v1, v2)
-          (commonScope, leastCommonSupertype(su, commonScope, l1, l2), greatestCommonSubtype(su, commonScope, u1, u2), commonVariance)
+          (commonScope, leastCommonSupertype(commonScope, l1, l2), greatestCommonSubtype(commonScope, u1, u2), commonVariance)
         }
       }
 
@@ -1045,7 +1050,7 @@ object Dol {
 
     //def exactEqualTypes(first: Type, second: Type) = (first == second)
 
-    def equalDefs(scope: Scope, first: Def, second: Def): Boolean = {
+    def equalDefs(su: SymbolUniverse, scope: Scope, first: Def, second: Def): Boolean = {
       if (defHasDuplicates(first)) ???
       if (defHasDuplicates(second)) ???
       val firstMap = defAsMap(first)
@@ -1053,38 +1058,38 @@ object Dol {
 
       (firstMap.keys == secondMap.keys
         && mapIntersect(firstMap, secondMap){
-          case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(scope, aTerm, bTerm)
-          case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypes(scope, aType, bType)
+          case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(su, scope, aTerm, bTerm)
+          case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypes(su, scope, aType, bType)
           case _ => false
         }.values.forall{(x: Boolean) => x})
     }
 
     // TODO
-    def equalTerms(scope: Scope, first: Term, second: Term): Boolean = {
+    def equalTerms(su: SymbolUniverse, scope: Scope, first: Term, second: Term): Boolean = {
       val assignedTypesEqual = (for {
         firstType <- first.assignedTypeOption
         secondType <- second.assignedTypeOption
-      } yield equalTypes(scope, firstType, secondType)).getOrElse(false)
+      } yield equalTypes(su, scope, firstType, secondType)).getOrElse(false)
 
       assignedTypesEqual && ((first, second) match {
         case (Var(_), Var(_))       => (first == second)
         case (App(_, _), App(_, _)) => (first == second)
         case (Sel(_, _), Sel(_, _)) => (first == second)
         case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x == y =>
-          (equalTerms(scope, xTerm, yTerm)
-            && equalTerms(scope, xResTerm, yResTerm))
+          (equalTerms(su, scope, xTerm, yTerm)
+            && equalTerms(su, scope, xResTerm, yResTerm))
         case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x == y =>
-          (equalTypes(scope, xType, yType)
-            && equalDefs(scope, xBody, yBody))
+          (equalTypes(su, scope, xType, yType)
+            && equalDefs(su, scope, xBody, yBody))
         case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x == y =>
-          (equalTypes(scope, xType, yType)
-            && equalTerms(scope, xBody, yBody))
+          (equalTypes(su, scope, xType, yType)
+            && equalTerms(su, scope, xBody, yBody))
         case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x != y =>
-          equalTerms(scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
+          equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
         case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x != y =>
-          equalTerms(scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
+          equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
         case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x != y =>
-          equalTerms(scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
+          equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
         case _ =>
           false
       })
@@ -1312,6 +1317,7 @@ object Dol {
      *  Formally, x: xType, xType <: To.
      */
     def varIsSubtypeOf(scope: Scope, z: Symbol, supertype: Type): Boolean = {
+      // TODO maybe factor inner out into separate function?
       def inner(scope: Scope, first: Type, second: Type, visitedLeft: Set[TypeProj], visitedRight: Set[TypeProj]): Boolean = {
         // TODO Confirm whether r is efficient. I expect r to get inlined.
         def r(scope: Scope = scope, first: Type = first, second: Type = second, visitedLeft: Set[TypeProj] = visitedLeft, visitedRight: Set[TypeProj] =
@@ -1319,12 +1325,12 @@ object Dol {
         (first, second) match {
           case (Bot, _) => true
           case (_, Top) => true
-          case (AndType(left, right), _) => r(first=left) || r(second=right)
-          case (_, AndType(left, right)) => r(first=left) && r(second=right)
+          case (_, AndType(left, right)) => r(second=left) && r(second=right) // IMPORTANT: This must be checked before the other AndType-case.
+          case (AndType(left, right), _) => r(first=left) || r(first=right)
           case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b => r(first=aType, second=bType)
 
-          case (TypeDecl(a, aLower, aUpper), TypeDecl(b, bLower, bUpper)) if a == b =>
-           r(first=bLower, second=aLower) && r(first=aUpper, second=bUpper)
+          case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLower, bUpper)) if a == b =>
+           r(first=bLower, second=aLowerType) && r(first=aUpperType, second=bUpper)
 
           case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) =>
             aProj == bProj || {
@@ -1345,14 +1351,16 @@ object Dol {
             r(second=bLowerType, visitedRight = visitedRight+bProj)
 
           case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
+            if (scope.contains(x)) ??? // TODO Maybe better to create new var "w", and rename {x,y}->w?
             // TODO is isVarFreeInType(x, second)-check necessary?
-            !isVarFreeInType(x, second) && r(second=typeRenameBoundVarAssumingNonFree(x, second))
+            (!isVarFreeInType(x, second)
+              && r(second=typeRenameBoundVarAssumingNonFree(x, second)))
 
           case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
             (r(first=yType, second=xType)
               && r(scope = scope+(x -> yType), first=xResType, second=yResType))
           case (_: RecType, _) | (_, _: RecType) =>
-            throw new TypecheckingError("nested rectype") // TODO Is this always forbidden? Special case?
+            rigidEqualTypes(first, second)
           case _ => false
         }
       }
@@ -1360,6 +1368,64 @@ object Dol {
       val zType = eliminateRecursiveTypes(scope(z), z)
       val zSupertype = eliminateRecursiveTypes(supertype, z)
       inner(scope, zType, zSupertype, Set(), Set())
+    }
+
+    /** Check if types are equal by subtyping.
+     * Formally, first <: second AND second <: first.
+     */
+    def varEqualTypes(scope: Scope, z: Symbol, second: Type): Boolean = {
+      val zType = scope(z)
+      (varIsSubtypeOf(scope, z, second)
+        && varIsSubtypeOf(scope + (z -> second), z, zType))
+    }
+
+    def equalTypes(su: SymbolUniverse, scope: Scope, first: Type, second: Type): Boolean = {
+      val z = su.newSymbol()
+      varEqualTypes(scope + (z -> first), z, second)
+    }
+
+    /** Check if first and second are exactly equal, except for renaming some bound vars.
+     */
+    def rigidEqualTypes(first: Type, second: Type): Boolean = (first, second) match {
+      case (Bot, Bot) => true
+      case (Top, Top) => true
+      case (AndType(l1, r1), AndType(l2, r2)) =>
+        // TODO Allow orders to differ? Probably best not to.
+        (rigidEqualTypes(l1, l2)
+          && rigidEqualTypes(r1, r2))
+      case (FieldDecl(a, aType), FieldDecl(b, bType)) =>
+        (a == b
+          && rigidEqualTypes(aType, bType))
+
+      case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) =>
+        (a == b
+          && rigidEqualTypes(aLowerType, bLowerType)
+          && rigidEqualTypes(aUpperType, bUpperType))
+
+      case (aProj: TypeProj, bProj: TypeProj) =>
+        aProj == bProj
+
+      case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
+        // TODO Allow x free in second? That would mean x is in the current
+        // scope... Maybe best to translate {x,y} to new var "w", after all?
+        // Would be nice to keep it as a pure function instead of passing SU
+        // everywhere.
+        (!isVarFreeInType(x, second)
+          && rigidEqualTypes(first, typeRenameBoundVarAssumingNonFree(x, second)))
+
+      case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
+        (rigidEqualTypes(yType, xType)
+          && rigidEqualTypes(xResType, yResType))
+      case (RecType(x, xType), RecType(y, yType)) if x != y =>
+        // TODO Allow x free in second? That would mean x is in the current
+        // scope... Maybe best to translate {x,y} to new var "w", after all?
+        // Would be nice to keep it as a pure function instead of passing SU
+        // everywhere.
+        (!isVarFreeInType(x, second)
+          && rigidEqualTypes(first, typeRenameBoundVarAssumingNonFree(x, second)))
+      case (RecType(x, xType), RecType(y, yType)) if x == y =>
+        rigidEqualTypes(xType, yType)
+      case _ => false
     }
 
     // TODO rename to: isSubtypeOfAssumingNoRecTypes?
@@ -1410,40 +1476,6 @@ object Dol {
     }
 
 
-    def equalTypes(scope: Scope, first: Type, second: Type): Boolean = {
-      isSubtypeOf(scope, first, second) && isSubtypeOf(scope, second, first)
-    }
-    //def equalTypes(su: SymbolUniverse, first: Type, second: Type): Boolean = (first, second) match {
-    //  case (Bot, Bot) => true
-    //  case (Top, Top) => true
-    //  case (TypeProj(_, _), TypeProj(_, _)) => (first == second)
-    //  case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
-    //    val z = su.newSymbol()
-    //    equalTypes(su,
-    //      FunType(z, xType, typeRenameVar(x, z, xResType)),
-    //      FunType(z, yType, typeRenameVar(y, z, yResType)))
-    //  case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
-    //    (equalTypes(su, xType, yType)
-    //      && equalTypes(su, xResType, yResType))
-    //  case (RecType(x, xType), RecType(y, yType)) if x != y =>
-    //    val z = su.newSymbol()
-    //    equalTypes(su,
-    //      RecType(z, typeRenameVar(x, z, xType)),
-    //      RecType(z, typeRenameVar(y, z, yType)))
-    //  case (RecType(x, xType), RecType(y, yType)) if x == y =>
-    //    equalTypes(su, xType, yType)
-    //  case (_, AndType(left, right)) =>
-    //    ???
-    //    // TODO from <: rl && from <: rr && (to <: ll || to <: rr)
-    //  case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
-    //    equalTypes(su, aType, bType)
-    //  case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
-    //    (equalTypes(su, aLowerType, bLowerType)
-    //      && equalTypes(su, aUpperType, bUpperType))
-    //  case _ => false
-    //}
-
-
     def isVarFreeIn(z: Symbol, t: Tree): Boolean = t match {
       case expr: Expr => isVarFreeInExpr(z, expr)
       case typ: Type => isVarFreeInType(z, typ)
@@ -1477,6 +1509,7 @@ object Dol {
       case _ => false
     }
 
+    // TODO make a variant that expands TypeProjs?
     def typeDfsSet[T](typ: Type)(f: Type => Set[T]): Set[T] = f(typ) ++ (typ match {
       case FunType(x, xType, resType) =>
         typeDfsSet(xType)(f) ++ typeDfsSet(resType)(f)
@@ -1492,22 +1525,20 @@ object Dol {
     })
 
     def allTypeMemberSymbolsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
-      case TypeProj(_, a) => Set(a)
+      case TypeProj(_, a)    => Set(a)
       case TypeDecl(a, _, _) => Set(a)
-      case _ => Set()
+      case _                 => Set()
     }
 
     def allFieldMemberSymbolsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
       case FieldDecl(a, _) => Set(a)
-      case _ => Set()
+      case _               => Set()
     }
 
     def allBoundVarsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
-      case FunType(x, _, _) =>
-        Set(x)
-      case RecType(x, _) =>
-        Set(x)
-      case _ => Set()
+      case FunType(x, _, _) => Set(x)
+      case RecType(x, _)    => Set(x)
+      case _                => Set()
     }
 
     def allFreeVarsInType(typ: Type): Set[Symbol] = typeDfsSet[Symbol](typ) {
@@ -1521,6 +1552,19 @@ object Dol {
       allBoundVarsInType(typ),
       allFreeVarsInType(typ)
     ).flatten
+
+
+    // TODO also do indirect? The problem is that we may need this when
+    // testing typeProjectUpper...
+    def allDirectTypeMembers(scope: Scope, typ: Type, visited: Set[TypeProj]): Set[Symbol] = typ match {
+      case RecType(x, xType) =>
+        allDirectTypeMembers(scope + (x -> xType), xType, visited)
+      case AndType(left, right) =>
+        (allDirectTypeMembers(scope, left, visited)
+          ++ allDirectTypeMembers(scope, right, visited))
+      case TypeDecl(a, _, _) => Set(a)
+      case _ => Set()
+    }
 
     def stringExprWithType(expr: Expr): String = {
       val s = expr match {
@@ -1720,7 +1764,7 @@ object Dol {
     private val counter = new AtomicInteger(init)
     def newSymbol(): Int = counter.getAndIncrement()
     def count(): Int = counter.get()
-    override def toString() = s"SymbolUniverse(current=${count()})"
+    override def toString() = s"SymbolUniverse(${count()})"
   }
 
   def await[T](awaitable: Awaitable[T]): T =

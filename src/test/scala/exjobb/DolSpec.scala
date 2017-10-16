@@ -16,6 +16,7 @@ import org.scalacheck.Shrink
 
 import DolGenerators._
 import DolShrinkers._
+import ScalaCheckUtils._
 
 object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs directly instead? include other specs here?
   // TODO some ideas: <http://www.michaelburge.us/2017/09/27/delta-debugging-in-haskell.html>
@@ -69,27 +70,29 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
 //    }
 //  }
 
+  // TODO if x does not typecheck, then f(x) should not typecheck either.
 
-//  property("positiveSequentialInferenceProblem") = {
-//    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem) { case (su, problem) =>
-//      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
-//
-//      val resString = res match {
-//        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
-//        case None => "res = None"
-//      }
-//
-//      resString |: Prop.all(
-//        res != None && NoFuture.equalTerms(problem.scope, res.get, problem.expected))
-//    }
-//  }
+  property("positiveSequentialInferenceProblem") = {
+    Prop.forAllShrink(genSUAndInferenceProblem, shrinkSUAndInferenceProblem){prettyProp{ case (su, problem) =>
+      val res = typecheckSequentially(su, problem.term, problem.prototype, problem.scope)
+
+      val resString = res match {
+        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
+        case None => "res = None"
+      }
+
+      resString |: Prop.all(
+        res != None && NoFuture.equalTerms(su,problem.scope, res.get, problem.expected)
+      )
+    }
+  }}
 
   // TODO
 //  property("positiveParallelInferenceProblem") = {
 //    val su = new SymbolUniverse()
 //    val generator: Gen[InferenceProblem] = genInferenceProblem(su, Map())
 //    val shrink: InferenceProblem => Stream[InferenceProblem] = shrinkInferenceProblem(su, _, isRoot=true)
-//    Prop.forAllShrink(generator, shrink) { (problem: InferenceProblem) =>
+//    Prop.forAllShrink(generator, shrink)[prettyProp{(problem: InferenceProblem) =>
 //      val res = typecheckInParallel(su, problem.term, problem.prototype, problem.scope)
 //
 //      val resString = res match {
@@ -99,7 +102,7 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
 //
 //      resString |: Prop.all(
 //        res != None && NoFuture.equalTerms(su, res.get, problem.expected))
-//    }
+//    }}
 //  }
 
 
