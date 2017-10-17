@@ -192,8 +192,11 @@ object DolGenerators {
     val justMakeSomethingUp: Gen[(GlobalContext, TypeProj)] = for { // TODO sized...
       (ctx2, x) <- ctx.newSymbol()
       (ctx3, a) <- ctx2.newSymbol()
-      (ctx4, aUpperType) <- genType(ctx3, scope) // TODO obfuscate the TypeDecl with extra fields?
-      (ctx5, aLowerType) <- genSubtype(ctx4, scope, aUpperType) // TODO obfuscate the TypeDecl with extra fields?
+      // NOTE: We may only use the globalScope here, since we don't want to
+      // leak references to the localScope (e.g. globalScope={_ -> TypeProj(y,_)},
+      // localScope{y->_}).
+      (ctx4, aUpperType) <- genType(ctx3, Map()) // TODO obfuscate the TypeDecl with extra fields?
+      (ctx5, aLowerType) <- genSubtype(ctx4, Map(), aUpperType) // TODO obfuscate the TypeDecl with extra fields?
       ctx6 <- ctx5.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
     } yield (ctx6, TypeProj(x, a))
 
@@ -413,9 +416,10 @@ object DolGenerators {
   }
 
 
+  // TODO maybe only return TypedTerm? untype(TypedTerm):Term?
   // TODO maybe nest InferenceProblems instead of terms? can always translate
   // to term.
-  sealed case class InferenceProblem(term: Term, prototype: Prototype, scope: Scope, expected: Term) {
+  sealed case class InferenceProblem(term: Term, prototype: Prototype, scope: Scope, expected: TypedTerm) {
     if (!isTermFullyTyped(expected)) {
       throw new Exception(s"not fully typed: $expected")
     }
@@ -431,7 +435,7 @@ object DolGenerators {
   def genVarInferenceProblem(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, InferenceProblem)] = {
     val justMakeSomethingUp = for {
       (ctx2, x) <- ctx.newSymbol
-      (ctx3, xType) <- genType(ctx2, scope)
+      (ctx3, xType) <- genType(ctx2, Map()) // NOTE: globalScope to prevent the localScope leaking.
       ctx4 <- ctx3.withBinding(x -> xType)
     } yield (ctx4, InferenceProblem(Var(x), Que, scope, Var(x).withType(xType)))
 
@@ -456,7 +460,7 @@ object DolGenerators {
     val justMakeSomethingUp = for {
       (ctx2, x) <- ctx.newSymbol()
       (ctx3, a) <- ctx2.newSymbol()
-      (ctx4, aType) <- genType(ctx3, scope) // TODO obfuscate by adding other fields?
+      (ctx4, aType) <- genType(ctx3, Map()) // TODO obfuscate by adding other fields?
       ctx5 <- ctx4.withBinding(x -> FieldDecl(a, aType))
     } yield (ctx5, InferenceProblem(Sel(x, a), Que, scope, Sel(x, a).withType(aType)))
     val fieldRefs = NoFuture.directFieldDeclsInScope(ctx.globalScope ++ scope)
@@ -481,47 +485,55 @@ object DolGenerators {
 
   //TODO def genComplexObjType(su: SymbolUniverse, scope: Scope): Gen[Type]
 
+  def genFieldDef(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Def, TypedDef)] = Gen.sized{ size =>
+    if (size < 2)
+      Gen.fail
+    else for { // minSize = 2 = 1 FieldDef + 1 aTerm.
+      (ctx2, a) <- ctx.newSymbol()
+      (ctx3, p) <- Gen.resize(size-1, genInferenceProblem(ctx2, scope))
+      myType <- const(FieldDecl(a, p.expectedType))
+    } yield (ctx3, FieldDef(a, p.term), FieldDef(a, p.expected).withType(myType))
+  }
+
+  def genTypeDef(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Def, TypedDef)] = Gen.sized{ size =>
+    if (size < 2)
+      Gen.fail
+    else for { // minSize = 2 = 1 TypeDef + 1 aType.
+      (ctx2, a) <- ctx.newSymbol()
+      (ctx3, aType) <- Gen.resize(size-1, genType(ctx2, scope))
+      myType <- const(TypeDecl(a, aType, aType))
+    } yield (ctx3, TypeDef(a, aType), TypeDef(a, aType).withType(myType))
+  }
+
+  def genSimpleDef(ctx: GlobalContext, scope: Scope, z: Symbol): Gen[(GlobalContext, Def, TypedDef)] = Gen.sized{ size =>
+    def updatedType(scope: Scope, typ: Type) = scope.get(z) match {
+      case Some(zType) => AndType(zType, typ)
+      case None => typ
+    }
+    val genAndDef = for { // minSize = 5 = 1 AndDef + 2*min(FieldDef, TypeDef, AndDef).
+      (leftSize, rightSize) <- splitSizeNonZero(size-1, min=2)
+      (ctx2, leftDef, leftTypedDef)   <- Gen.resize(leftSize, genSimpleDef(ctx, scope, z))
+      scopeWithLeft <- const(scope + (z -> updatedType(scope, leftTypedDef.assignedType)))
+      (ctx3, rightDef, rightTypedDef) <- Gen.resize(rightSize, genSimpleDef(ctx2, scopeWithLeft, z))
+      myType <- const(AndType(leftTypedDef.assignedType, rightTypedDef.assignedType))
+    } yield (ctx3, AndDef(leftDef, rightDef), AndDef(leftTypedDef, rightTypedDef).withType(myType))
+
+    if (size >= 5)
+      oneOf(genFieldDef(ctx, scope), genTypeDef(ctx, scope), genAndDef)
+    else if (size >= 2)
+      oneOf(genFieldDef(ctx, scope), genTypeDef(ctx, scope))
+    else
+      Gen.fail
+  }
+
   def genSimpleObjInferenceProblem(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, InferenceProblem)] = Gen.sized{ size =>
-    ??? // TODO
-//    def genSimpleDef(su: SymbolUniverse, scope: Scope, z: Symbol): Gen[(Def, Scope, TypedDef)] = Gen.sized{ size =>
-//      val genFieldDef = for {
-//        n <- const(size) if n >= 2 // 1 for FieldDef-node and 1 for aTerm.
-//        a <- const(su.newSymbol())
-//        p <- Gen.resize(n-1, genInferenceProblem(su, scope))
-//        myType     <- const(FieldDecl(a, p.expectedType))
-//      } yield (FieldDef(a, p.term), scopePush(p.scope, z, myType), FieldDef(a, p.expected).withType(myType))
-//
-//      val genTypeDef = for {
-//        n <- const(size) if n >= 2 // 1 for TypeDef-node and 1 for aType.
-//        a <- const(su.newSymbol())
-//        (scope2, aType) <- Gen.resize(n-1, genType(su, scope))
-//        myType          <- const(TypeDecl(a, aType, aType))
-//      } yield (TypeDef(a, aType), scopePush(scope2, z, myType), TypeDef(a, aType).withType(myType))
-//
-//      val genAndDef = for {
-//        n   <- const(size) if n >= 5 // 1 for AndDef and 2 for each side (since FieldDef and TypeDef needs atleast 2 each).
-//        sub <- const(n - 1)
-//        leftSize  <- Gen.choose(2, sub-2)
-//        rightSize <- const(sub - leftSize)
-//        (leftDef, leftScope, leftTypedDef)    <- Gen.resize(leftSize, genSimpleDef(su, scope, z))
-//        (rightDef, rightScope, rightTypedDef) <- Gen.resize(rightSize, genSimpleDef(su, leftScope, z))
-//        myType     <- const(AndType(leftTypedDef.assignedType, rightTypedDef.assignedType))
-//      } yield (AndDef(leftDef, rightDef), scopePush(rightScope, z, myType), AndDef(leftTypedDef, rightTypedDef).withType(myType))
-//
-//      if (size >= 5)
-//        oneOf(genFieldDef, genTypeDef, genAndDef)
-//      else if (size >= 2)
-//        oneOf(genFieldDef, genTypeDef)
-//      else
-//        Gen.fail
-//    }
-//
-//    if (size == 0) Gen.fail
-//    for {
-//      x <- const(su.newSymbol())
-//      (defs, defsScope, typedDefs) <- Gen.resize(size - 1, genSimpleDef(su, scope, x))
-//      xType <- const(typedDefs.assignedType)
-//    } yield InferenceProblem(Obj(x, xType, defs), Que, defsScope - x, Obj(x, xType, typedDefs).withType(xType))
+    if (size == 0)
+      Gen.fail
+    else for {
+      (ctx2, x) <- ctx.newSymbol()
+      (ctx3, defs, typedDefs) <- Gen.resize(size - 1, genSimpleDef(ctx2, scope, x))
+      xType <- const(typedDefs.assignedType)
+    } yield (ctx3, InferenceProblem(Obj(x, xType, defs), Que, scope, Obj(x, xType, typedDefs).withType(xType)))
   }
 
   // TODO genComplexObjInferenceProblem
@@ -544,14 +556,14 @@ object DolGenerators {
     val genFromArg = for {
       (ctx2, f) <- ctx.newSymbol()
       (ctx3, y) <- ctx2.newSymbol()
-      (ctx4, funType @ FunType(x, xType, xResType)) <- genFunType(ctx3, scope) // TODO make it so that this can generate a typeproj to a funtype
+      (ctx4, funType @ FunType(x, xType, xResType)) <- genFunType(ctx3, Map()) // TODO make it so that this can generate a typeproj to a funtype
       ctx5 <- ctx4.withBinding(f -> funType)
-      (ctx6, argSubtype) <- genSubtype(ctx5, scope, xType)
+      (ctx6, argSubtype) <- genSubtype(ctx5, Map(), xType)
       ctx7 <- ctx6.withBinding(y -> argSubtype)
       appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
     } yield (ctx7, InferenceProblem(App(f, y), Que, scope, App(f, y).withType(appResType)))
 
-    var funsInScope = scope.filter{
+    var funsInScope = ctx.globalScope.filter{ // TODO Can't use localScope since we need to introduce y, below.... Must either do Let(y, ...) or eliminate all vars in localScope before binding....
       case (_, _: FunType) => true
       case _ => false
     }
@@ -562,10 +574,10 @@ object DolGenerators {
       val genFromScope = for {
         (f, FunType(x, xType, xResType)) <- oneOf(funsInScope.toSeq)
         (ctx2, y) <- ctx.newSymbol()
-        (ctx3, yType) <- genSubtype(ctx2, scope, xType) // TODO make it so that this can pick yType from scope.
+        (ctx3, yType) <- genSubtype(ctx2, Map(), xType) // TODO make it so that this can pick yType from scope.
         ctx4 <- ctx3.withBinding(y -> yType)
         appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
-      } yield (ctx2, InferenceProblem(App(f, y), Que, scope + (y -> yType), App(f, y).withType(appResType)))
+      } yield (ctx4, InferenceProblem(App(f, y), Que, scope, App(f, y).withType(appResType)))
       oneOf(genFromArg, genFromScope)
     }
   }
