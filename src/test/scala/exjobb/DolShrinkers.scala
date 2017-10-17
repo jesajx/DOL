@@ -36,11 +36,10 @@ object DolShrinkers {
     case _ => Stream()
   }
 
-  def shrinkScopeIfPossible(problem: InferenceProblem): InferenceProblem = {
-
+  def shrinkScopeIfPossible(scope: Scope, directlyUsedVars: Set[Symbol]): Scope = {
     def bfs(usedVars: Set[Symbol]): Set[Symbol] = {
       val reachable = usedVars.flatMap{x =>
-        NoFuture.allFreeVarsInType(problem.scope(x))
+        NoFuture.allFreeVarsInType(scope(x))
       }
       val newUsedVars: Set[Symbol] = usedVars ++ reachable
       if (newUsedVars.size == usedVars.size)
@@ -49,22 +48,81 @@ object DolShrinkers {
         bfs(newUsedVars)
     }
 
+    val allUsedVars = bfs(directlyUsedVars)
+    allUsedVars.map{x => (x, scope(x))}.toMap
+  }
+
+  def shrinkInferenceProblemScopeIfPossible(problem: InferenceProblem): InferenceProblem = {
     val directlyUsedVars = problem.scope.keys.filter{x =>
-      (NoFuture.isVarFreeInExpr(x, problem.term)
+      (NoFuture.isVarFreeInTerm(x, problem.term)
         || NoFuture.isVarFreeInType(x, problem.prototype))
     }.toSet
-    val allUsedVars = bfs(directlyUsedVars)
-
-    val newScope = allUsedVars.map{x => (x, problem.scope(x))}.toMap
+    val newScope = shrinkScopeIfPossible(problem.scope, directlyUsedVars)
     InferenceProblem(problem.term, problem.prototype, newScope, problem.expected)
   }
 
   def shrinkScope(problem: InferenceProblem): Stream[InferenceProblem] = {
-    val newProblem = shrinkScopeIfPossible(problem)
+    val newProblem = shrinkInferenceProblemScopeIfPossible(problem)
     if (newProblem.scope.size < problem.scope.size) Stream(newProblem) else Stream()
   }
 
-  def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem, isRoot: Boolean = false): Stream[InferenceProblem] = {
+  def shrinkSubtype(ctx: GlobalContext, scope: Scope, subtype: Type, typ: Type): Stream[(GlobalContext, Type)] = (subtype, typ) match {
+    case _ => Stream()
+  }
+
+  /** Make `supertype` "smaller" (in nodes) s.t. breaking `typ <: newSupertype`.
+   *
+   * Note this allows the case typ <: newSupertype <: supertype
+   * For example, if `typ == Bot`, then newSupertype can be any type.
+   *
+   *  Assumes `typ <: supertype`.
+   */
+  def shrinkSupertype(ctx: GlobalContext, scope: Scope, typ: Type, supertype: Type): Stream[(GlobalContext, Type)] = (typ, supertype) match {
+    case (Bot, FunType(x, xType, xResType)) =>
+      ((ctx, xType)
+        #:: (ctx.copy(globalScope = ctx.globalScope+(x -> xType)), xResType)
+        #:: (for {
+          (ctx2, newXType) <- shrinkSubtype(ctx, scope, xType, Top)
+        } yield (ctx2, FunType(x, newXType, xResType)): (GlobalContext, Type))
+        #::: (for {
+          (ctx2, newXResType) <- shrinkSupertype(ctx, scope, Bot, xResType)
+        } yield (ctx2, FunType(x, xType, newXResType)): (GlobalContext, Type)))
+    case (Bot, FieldDecl(a, aType)) =>
+      ((ctx, aType)
+        #:: (for {
+          (ctx2, newAType) <- shrinkSupertype(ctx, scope, Bot, aType)
+        } yield (ctx2, FieldDecl(a, newAType)): (GlobalContext, Type)))
+    case (Bot, TypeDecl(a, aLowerType, aUpperType)) =>
+      (//(ctx, aLowerType) #::
+        (ctx, aUpperType)
+        #:: (for {
+          (ctx2, newALowerType, newAUpperType) <- shrinkTypePair(ctx, scope, aLowerType, aUpperType)
+        } yield (ctx2, TypeDecl(a, newALowerType, newAUpperType)): (GlobalContext, Type)))
+    case (Bot, RecType(x, xType)) =>
+      ((ctx, NoFuture.eliminateVarUp(ctx.globalScope ++ scope, x, xType)) // TODO vs "isVarFreeInType then don't"? we may want to just shrinkSupertype to test eliminateVarUp, but probably not to test isVarFreeInType...
+        #:: (for {
+          (ctx2, newXType) <- shrinkSupertype(ctx, scope + (x -> xType), Bot, xType)
+        } yield (ctx2, RecType(x, xType)): (GlobalContext, Type)))
+    case (Bot, AndType(left, right)) =>
+      ((ctx, left)
+        #:: (ctx, right)
+        #:: (for {
+          (ctx2, newLeft) <- shrinkSupertype(ctx, scope, Bot, left)
+        } yield (ctx2, NoFuture.andType(newLeft, right)): (GlobalContext, Type))
+        #::: (for {
+          (ctx2, newRight) <- shrinkSupertype(ctx, scope, Bot, right)
+        } yield (ctx2, NoFuture.andType(left, newRight)): (GlobalContext, Type)))
+    case (Bot, TypeProj(x, a)) =>
+      ((ctx, NoFuture.typeProjectUpper(ctx.globalScope ++ scope, x, a).get)
+        #:: Stream())
+    case _ => Stream()
+  }
+
+  def shrinkTypePair(ctx: GlobalContext, scope: Scope, subtype: Type, supertype: Type): Stream[(GlobalContext, Type, Type)] =
+    (shrinkSupertype(ctx, scope, subtype, supertype).map{case (ctx2, supertype2) => (ctx2, subtype, supertype2)}
+      #::: shrinkSubtype(ctx, scope, subtype, supertype).map{case (ctx2, subtype2) => (ctx2, subtype2, supertype)})
+
+  def shrinkInferenceProblem(su: SymbolUniverse, problem: InferenceProblem, isRoot: Boolean = false): Stream[InferenceProblem] = { // TODO clean up
     var res = Stream[InferenceProblem]()
 
     // TODO use flatMap to make lazystreams?
@@ -139,6 +197,6 @@ object DolShrinkers {
     //if (res.size == 0)
     //  shrinkScope(problem)
     //else
-    res.map{shrinkScopeIfPossible}
+    res.map{shrinkInferenceProblemScopeIfPossible}
   }
 }

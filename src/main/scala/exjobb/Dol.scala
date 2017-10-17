@@ -243,6 +243,13 @@ object Dol {
   def max(rest: Int*): Int = rest.toList.max
 
 
+  sealed trait Constraint
+
+  case object TrueConstraint extends Constraint
+  case object FalseConstraint extends Constraint
+  case class OrConstraint(left: Constraint, right: Constraint) extends Constraint
+  case class AndConstraint(left: Constraint, right: Constraint) extends Constraint
+  case class SubtypeConstraint(scope: Scope, left: Type, right: Type, variance: Variance) extends Constraint // TODO add Variance here?
 
 
 
@@ -344,13 +351,6 @@ object Dol {
 
     def minType(scope: Scope, left: Type, right: Type): Option[Type] = ??? // Some(left) if left <: right else Some(right) if right <: left else None
 
-    sealed trait Constraint
-
-    case object TrueConstraint extends Constraint
-    case object FalseConstraint extends Constraint
-    case class OrConstraint(left: Constraint, right: Constraint) extends Constraint
-    case class AndConstraint(left: Constraint, right: Constraint) extends Constraint
-    case class SubtypeConstraint(scope: Scope, left: Type, right: Type, variance: Variance) extends Constraint // TODO add Variance here?
     // TODO replace AndConstraint and OrConstraint with mergine constraints?
     // and({A <: X <: B}, {C <: X <: D}) = {max(A, C) <: X <: min(B, D)}
     // or({A <: X <: B}, {C <: X <: D}) = {min(A, C) <: X <: max(B, D)}?
@@ -465,7 +465,7 @@ object Dol {
 
     // TODO isSubtypeOf(scope, a, b)?
 
-    def solveConstraint(su: SymbolUniverse, solveSet: Set[TypeProj], constraint: Constraint): Option[Map[TypeProj, Type]] = { // TODO
+    def solveConstraint(solveSet: Set[TypeProj], constraint: Constraint): Option[Map[TypeProj, Type]] = { // TODO
 
       def mergeConstraints(left: Map[TypeProj, (Scope, Type, Type, Variance)], right: Map[TypeProj, (Scope, Type, Type, Variance)]): Map[TypeProj, (Scope, Type, Type, Variance)] = {
         mapUnion(left, right){case ((s1, l1, u1, v1), (s2, l2, u2, v2)) =>
@@ -661,7 +661,9 @@ object Dol {
         case (FieldDecl(a, aType), Top) => gath(scope, from, FieldDecl(a, Top), visitedUp, visitedDown, variance) // TODO TrueConstraint? still necessary to decide on variance?
         case (Bot, FieldDecl(a, aType)) => gath(scope, FieldDecl(a, Bot), to, visitedUp, visitedDown, variance)
 
-        case (Bot, TypeDecl(a, aLowerType, aUpperType)) => ??? // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
+        case (Bot, TypeDecl(a, _, _)) => // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
+          gath(scope, TypeDecl(a, Top, Bot), to, visitedUp, visitedDown, variance)
+
         case (TypeDecl(a, aLowerType, aUpperType), Top) => gath(scope, from, TypeDecl(a, Bot, Top), visitedUp, visitedDown, variance)
 
         case (FunType(x, _, _), Top) => gath(scope, from, FunType(x, Bot, Top), visitedUp, visitedDown, variance)
@@ -747,7 +749,7 @@ object Dol {
     }
 
 
-    def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
+    def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj] = Set()): Type = typ match {
       case aProj @ TypeProj(x, a) if x == z =>
         val aUpperType = typeProjectUpper(scope, x, a).getOrElse{error()}
         eliminateVarUp(scope, z, aUpperType, visited + aProj)
@@ -915,7 +917,7 @@ object Dol {
       val z = su.newSymbol()
       val (newTo, solveSet) = prep(su, z, to)
       val constraint = gather(su, scope, solveSet, from, newTo, Covariant)
-      solveConstraint(su, solveSet, constraint) match {
+      solveConstraint(solveSet, constraint) match {
         case Some(solution) => Some(applyConstraintSolution(newTo, solution))
         case None           => None
       }
@@ -925,7 +927,7 @@ object Dol {
       val z = su.newSymbol()
       val (newTo, solveSet) = prep(su, z, to)
       val constraint = gather(su, scope, solveSet, newTo, from, Contravariant)
-      solveConstraint(su, solveSet, constraint) match {
+      solveConstraint(solveSet, constraint) match {
         case Some(solution) => Some(applyConstraintSolution(newTo, solution))
         case None           => None
       }
@@ -955,7 +957,7 @@ object Dol {
     }
 
     def typeRenameBoundVarAssumingNonFree(toVar: Symbol, typ: Type): Type = {
-      if (isVarFreeIn(toVar, typ)) ??? // TODO Caller's responsibility?
+      if (isVarFreeInType(toVar, typ)) ??? // TODO Caller's responsibility?
       typ match {
         case RecType(x, xType) if x != toVar =>
           RecType(toVar, typeRenameVar(x, toVar, xType))
@@ -967,7 +969,7 @@ object Dol {
     }
 
     def termRenameBoundVarAssumingNonFree(toVar: Symbol, term: Term): Term ={
-      if (isVarFreeIn(toVar, term)) ???
+      if (isVarFreeInTerm(toVar, term)) ???
       term match {
         case Let(x, xTerm, resTerm) if x != toVar => termRenameVar(x, toVar, Let(toVar, xTerm, resTerm))
         case Obj(x, xType, d)       if x != toVar => termRenameVar(x, toVar, Obj(toVar, xType, d))
@@ -1157,7 +1159,9 @@ object Dol {
 //      val State(projSet, typ) = inner(eliminateRecursiveTypes(prototype, x))
 //      (projSet, typ)
       def inner(count: Int, prototype: Prototype): (Int, Type) = prototype match {
-        case RecType(x, xType) => throw new TypecheckingError("nested RecType")
+        case RecType(x, xType) =>
+          val (count2, xType2) = inner(count, xType)
+          (count2, RecType(x, xType2))
         case Que =>
           val proj = TypeProj(z, count)
           (count + 1, proj)
@@ -1190,12 +1194,18 @@ object Dol {
       def gath(scope: Scope, from: Type, to: Type, visitedUp: Set[TypeProj], visitedDown: Set[TypeProj], variance: Variance): Constraint = {
         def rec(scope: Scope = scope, from: Type = from, to: Type = to, visitedUp: Set[TypeProj] = visitedUp, visitedDown: Set[TypeProj] = visitedDown, variance: Variance = variance) = gath(scope, from, to, visitedUp, visitedDown, variance)
         (from, to) match {
-          case (_: RecType, _) | (_, _: RecType) =>  throw new TypecheckingError("nested RecType")
+          case (Bot, RecType(y, yType)) if (!isPrototype(yType)) => TrueConstraint // TODO hack
+          case (RecType(x, xType), Top) if (!isPrototype(xType)) => TrueConstraint // TODO hack
+          case (RecType(x, xType), RecType(y, yType)) if x != y =>
+            rec(to=typeRenameBoundVarAssumingNonFree(x, to))
+          case (RecType(x, xType), RecType(y, yType)) if x == y =>
+            rec(scope = scope + (x -> xType), from=xType, to=yType, variance=Invariant) // TODO vs RigidVariance?
 
           case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
           case (Bot, FieldDecl(a, aType)) => rec(from=FieldDecl(a, Bot))
 
-          case (Bot, TypeDecl(a, aLowerType, aUpperType)) => ??? // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
+          case (Bot, TypeDecl(a, aLowerType, aUpperType)) => // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
+            rec(from=TypeDecl(a, Top, Bot)) // TODO Probably works assuming aLowerType <: aUpperType, or exactly one of them is a prototype!?!?
           case (TypeDecl(a, aLowerType, aUpperType), Top) => rec(to=TypeDecl(a, Bot, Top))
 
           case (FunType(x, _, _), Top) => rec(to=FunType(x, Bot, Top))
@@ -1298,7 +1308,7 @@ object Dol {
       val constraint = varGather(scope, r, z, labeledPrototype, variance)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
       for {
-        solution <- solveConstraint(???, solveSet, constraint) // TODO is su necessary?
+        solution <- solveConstraint(solveSet, constraint)
       } yield applyConstraintSolution(labeledPrototype, solution)
     }
 
@@ -1476,11 +1486,6 @@ object Dol {
     }
 
 
-    def isVarFreeIn(z: Symbol, t: Tree): Boolean = t match {
-      case expr: Expr => isVarFreeInExpr(z, expr)
-      case typ: Type => isVarFreeInType(z, typ)
-    }
-
     def isVarFreeInType(z: Symbol, typ: Type): Boolean = typ match {
       case TypeProj(x, a) => (x == z)
       case FunType(x, xType, resType) if x != z =>
@@ -1496,16 +1501,20 @@ object Dol {
       case _ => false // Bot, Top, Que
     }
 
-    def isVarFreeInExpr(z: Symbol, e: Expr): Boolean = e match {
+    def isVarFreeInDef(z: Symbol, e: Def): Boolean = e match {
+      case FieldDef(a, aTerm)     => isVarFreeInTerm(z, aTerm)
+      case TypeDef(a, aType)      => isVarFreeInType(z, aType)
+      case AndDef(left, right)    => (isVarFreeInDef(z, left) || isVarFreeInDef(z, right))
+      case _ => false
+    }
+
+    def isVarFreeInTerm(z: Symbol, e: Expr): Boolean = e match {
       case Var(x)                 => (x == z)
       case Sel(x, a)              => (x == z)
       case App(x, y)              => (x == z || y == z)
-      case Let(x, xTerm, resTerm) if x != z => isVarFreeInExpr(z, xTerm) || isVarFreeInExpr(z, resTerm)
-      case Obj(x, xType, d)       if x != z => isVarFreeInType(z, xType) || isVarFreeInExpr(z, d)
-      case Fun(x, xType, resTerm) if x != z => isVarFreeInType(z, xType) || isVarFreeInExpr(z, resTerm)
-      case FieldDef(a, aTerm)     => isVarFreeInExpr(z, aTerm)
-      case TypeDef(a, aType)      => isVarFreeInType(z, aType)
-      case AndDef(left, right)    => (isVarFreeInExpr(z, left) || isVarFreeInExpr(z, right))
+      case Let(x, xTerm, resTerm) if x != z => isVarFreeInTerm(z, xTerm) || isVarFreeInTerm(z, resTerm)
+      case Obj(x, xType, d)       if x != z => isVarFreeInType(z, xType) || isVarFreeInDef(z, d)
+      case Fun(x, xType, resTerm) if x != z => isVarFreeInType(z, xType) || isVarFreeInTerm(z, resTerm)
       case _ => false
     }
 

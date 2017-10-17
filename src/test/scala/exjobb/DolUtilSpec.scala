@@ -298,6 +298,51 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
+  property("NoFuture.varGather -- a <: b ==> gather(a, b, Covariant) == TrueConstraint") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, b) <- genType(ctx3, Map())
+      (ctx5, a) <- genSubtype(ctx4, Map(), b)
+    } yield (ctx5, r, z, a, b)
+    //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
+    //  val (ctx, r, z, a, b) = tuple
+    //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) =>
+    //    (ctx2, r, z, a2, b2)
+    //  }
+    //}
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b) =>
+      val scope = ctx.globalScope
+      val res = NoFuture.varGather(scope + (z -> a), r, z, b, Covariant)
+      (prettyNamed("res", res)
+        |: Prop.all(res == TrueConstraint))
+    }}
+  }
+
+
+  property("NoFuture.varRaise -- a <: b ==> raise(a, b) == b") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, b) <- genType(ctx3, Map())
+      (ctx5, a) <- genSubtype(ctx4, Map(), b)
+    } yield (ctx5, r, z, a, b)
+    //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
+    //  val (ctx, r, z, a, b) = tuple
+    //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
+    //}
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b) =>
+      val scope = ctx.globalScope
+      val res = NoFuture.varRaise(scope + (z -> a), r, z, b)
+      (prettyNamed("res", res)
+        |: Prop.all(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, b)))
+    }}
+  }
+
+  // TODO solveConstraint
+
   // TODO typeProjectUpper,typeProjectLower,glb,lub: are not really "utils".
   // Should probably be moved do separate.
 
