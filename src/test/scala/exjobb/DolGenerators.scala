@@ -216,7 +216,7 @@ object DolGenerators {
       Gen.fail
     else for {
       (ctx2, a)     <- ctx.newSymbol()
-      (ctx3, aType) <- Gen.resize(size-1, genType(ctx, scope))
+      (ctx3, aType) <- Gen.resize(size-1, genType(ctx2, scope))
     } yield (ctx3, FieldDecl(a, aType))
   }
 
@@ -387,8 +387,6 @@ object DolGenerators {
     // TODO genRecType?
     // TODO genNonRecursiveObject
   }
-
-
 
 
 

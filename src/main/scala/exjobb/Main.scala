@@ -6,19 +6,54 @@ import cell._
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val problem = (new SymbolUniverse(20), Obj(16,TypeDecl(17,Top,Top),TypeDef(17,Top)), Que, Map():Scope, Obj(16, TypeDecl(17,Top,Top), TypeDef(17,Top).withType(TypeDecl(17,Top,Top))).withType(TypeDecl(17,Top,Top)))
-    val (su, term, prototype, scope, expected) = problem
-    val res = typecheckSequentially(su, term, prototype, scope)
+//    val problem = (new SymbolUniverse(20), Obj(16,TypeDecl(17,Top,Top),TypeDef(17,Top)), Que, Map():Scope, Obj(16, TypeDecl(17,Top,Top), TypeDef(17,Top).withType(TypeDecl(17,Top,Top))).withType(TypeDecl(17,Top,Top)))
+//    val (su, term, prototype, scope, expected) = problem
+//    val res = typecheckSequentially(su, term, prototype, scope)
+//
+//    pprint.pprintln(problem)
+//    println(s"res = $res")
 
-    pprint.pprintln(problem)
-    println(s"res = $res")
 
-
-  val cmp = NoFuture.equalTypes(new SymbolUniverse(10000), Map(),
-    AndType(FunType(2, Bot, FunType(3, Top, Bot)), FunType(4, Top, Top)),
-    AndType(FunType(2, Bot, FunType(3, Top, Bot)), FunType(4, Top, Top)))
-  pprint.pprintln(cmp)
-
+val ((scope, nextSymbol), z, r, a, b) = (
+  (Map(3 -> TypeDecl(4, Bot, Top)), 11),
+  1,
+  0,
+  Bot,
+  RecType(
+    2,
+    AndType(
+      AndType(FieldDecl(3, TypeProj(3, 4)), TypeDecl(5, Bot, Bot)),
+      FieldDecl(
+        6,
+        FunType(
+          6,
+          AndType(TypeDecl(7, Top, Top), FieldDecl(8, Top)),
+          TypeDecl(
+            8,
+            Bot,
+            FieldDecl(
+              9,
+              TypeDecl(
+                9,
+                Bot,
+                TypeDecl(
+                  10,
+                  Bot,
+                  AndType(
+                    FieldDecl(11, TypeProj(2, 5)),
+                    FieldDecl(11, Bot)
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)
+val res = NoFuture.varRaise(scope + (z -> a), r, z, b)
+pprint.pprintln(res)
   }
 
 //  sealed case class InferenceProblem(term: Term, prototype: CanonicalPrototype, scope: CanonicalScope, expected: Term)
