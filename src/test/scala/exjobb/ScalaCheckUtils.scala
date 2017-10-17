@@ -16,13 +16,14 @@ import org.scalacheck.Shrink
 
 object ScalaCheckUtils {
 
-  def splitSizeNonZero(size: Int): Gen[(Int, Int)] = {
-    if (size < 2)
-      ??? // should not happen
+  def splitSizeNonZero(size: Int, min: Int = 1): Gen[(Int, Int)] = {
+    if (size < 2*min || size < 0 || min < 0)
+      ??? // This indicates a bug in the caller's code.
     else for {
-      left <- Gen.choose(1, size-1)
+      left <- Gen.choose(min, size-min)
     } yield (left, size - left)
   }
+
 
   // TODO Maybe make a wrapper around Gen to keep track of "minsize"?
   // Alternatively: don't write so many generators....

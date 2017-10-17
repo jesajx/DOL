@@ -74,10 +74,10 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
 
   property("positiveSequentialInferenceProblem") = {
     val generator: Gen[(SymbolUniverse, InferenceProblem)] = for{
-      su      <- const(new SymbolUniverse())
-      scope   <- genScope(su)
-      problem <- genInferenceProblem(su, scope)
-    } yield (su, problem)
+      ctx <- const(GlobalContext())
+      ctx2  <- genGlobalScope(ctx)
+      (ctx3, problem) <- genInferenceProblem(ctx2, Map())
+    } yield (new SymbolUniverse(ctx3.nextSymbol), problem)
     def shrink(tuple: (SymbolUniverse, InferenceProblem)): Stream[(SymbolUniverse, InferenceProblem)] = {
       val (su, problem) = tuple
       shrinkInferenceProblem(su, problem, isRoot=true).map{newProblem => (su, newProblem)}

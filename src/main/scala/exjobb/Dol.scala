@@ -1595,7 +1595,7 @@ object Dol {
       }
     }
 
-    def directFieldDecls(su: SymbolUniverse, scope: Scope, x: Symbol): Map[SymbolPath, Type] = {
+    def directFieldDecls(scope: Scope, x: Symbol): Map[SymbolPath, Type] = {
       def inner(scope: Scope, path: SymbolPath, typ: Type, visited: Set[TypeProj]): Map[SymbolPath, Type] = typ match {
         case AndType(left, right) =>
           val leftMap = inner(scope, path, left, visited)
@@ -1615,8 +1615,8 @@ object Dol {
       }
       inner(scope, Vector(x), scope(x), Set())
     }
-    def directFieldDeclsInScope(su: SymbolUniverse, scope: Scope): Map[SymbolPath, Type] = {
-      scope.keys.map{directFieldDecls(su, scope, _)}.fold(Map()){case (leftMap, rightMap) =>
+    def directFieldDeclsInScope(scope: Scope): Map[SymbolPath, Type] = {
+      scope.keys.map{directFieldDecls(scope, _)}.fold(Map()){case (leftMap, rightMap) =>
         mapUnion(leftMap, rightMap){AndType(_, _)}
       }
     }
