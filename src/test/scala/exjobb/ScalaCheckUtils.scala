@@ -25,6 +25,7 @@ object ScalaCheckUtils {
   }
 
 
+
   // TODO Maybe make a wrapper around Gen to keep track of "minsize"?
   // Alternatively: don't write so many generators....
 

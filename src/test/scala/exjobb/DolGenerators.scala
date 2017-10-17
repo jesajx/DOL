@@ -25,9 +25,12 @@ object DolGenerators {
       const(copy(globalScope = globalScope+binding))
     def newSymbol(): Gen[(GlobalContext, Symbol)] =
       const((copy(nextSymbol = nextSymbol+1), nextSymbol))
+    def toSymbolUniverse(): Gen[SymbolUniverse] =
+      const(new SymbolUniverse(nextSymbol))
   }
   // TODO Hide GlobalContext in monad?
 
+  def genGlobalScope(ctx: GlobalContext = GlobalContext()): Gen[GlobalContext] = const(ctx)
 
   def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
     if (size < 3)
@@ -44,46 +47,45 @@ object DolGenerators {
 
 
 
-  def genGlobalScope(ctx: GlobalContext): Gen[GlobalContext] = const(ctx)
 
   // TODO should some of these be Cogen rather then Gen?
 
-  def genLowerPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
-    case FunType(x, xType, resType) =>
-      oneOf(
-        const(typ),
-        const(Que),
-        for {
-          xPrototype <- genUpperPrototypeFromType(su, scope, xType)
-          resPrototype <- genLowerPrototypeFromType(su, scope, resType)
-        } yield FunType(x, xPrototype, resPrototype))
-    case _ => oneOf(const(Que), const(typ))
-  }
-  def genUpperPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
-    // TODO obj-types probably need special handling...
-    case FunType(x, xType, resType) =>
-      oneOf(
-        const(typ),
-        const(Que),
-        for {
-          xPrototype <- genLowerPrototypeFromType(su, scope, xType)
-          resPrototype <- genUpperPrototypeFromType(su, scope, resType)
-        } yield FunType(x, xPrototype, resPrototype))
-    case _ => oneOf(const(Que), const(typ))
-  }
+//  def genLowerPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
+//    case FunType(x, xType, resType) =>
+//      oneOf(
+//        const(typ),
+//        const(Que),
+//        for {
+//          xPrototype <- genUpperPrototypeFromType(su, scope, xType)
+//          resPrototype <- genLowerPrototypeFromType(su, scope, resType)
+//        } yield FunType(x, xPrototype, resPrototype))
+//    case _ => oneOf(const(Que), const(typ))
+//  }
+//  def genUpperPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
+//    // TODO obj-types probably need special handling...
+//    case FunType(x, xType, resType) =>
+//      oneOf(
+//        const(typ),
+//        const(Que),
+//        for {
+//          xPrototype <- genLowerPrototypeFromType(su, scope, xType)
+//          resPrototype <- genUpperPrototypeFromType(su, scope, resType)
+//        } yield FunType(x, xPrototype, resPrototype))
+//    case _ => oneOf(const(Que), const(typ))
+//  }
 
 
 
-  def genSupertype(su: SymbolUniverse, scope: Scope, subtype: Type, visited: Set[TypeProj] = Set()): Gen[Type] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
+  def genSupertype(ctx: GlobalContext, scope: Scope, subtype: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
     if (size == 0)
       Gen.fail
     else if (size == 1) {
-      if (subtype.totNumNodes == 1)
-        oneOf(const(subtype), const(Top))
+      if (subtype.totNumNodes < 1)
+        const((ctx, Top))
       else
-        const(Top)
+        oneOf(const((ctx, subtype)), const((ctx, Top)))
     } else {
-      val extra: Seq[Gen[Type]] = subtype match {
+      val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match {
 //        case FunType(x, xType, resType) if (size >= 3) =>
 //          Seq(for {
 //            subSize <- size - 1
@@ -124,7 +126,7 @@ object DolGenerators {
       }
       // TODO and(self, super(self))? and(super(self), super(self))?
 
-      oneOf(const(subtype), const(Top), extra: _*)
+      oneOf(const((ctx, subtype)), const((ctx, Top)), extra: _*)
     }
   }
 
@@ -239,12 +241,12 @@ object DolGenerators {
       case None => typ
     }
 
-    val genAccAndType: Gen[(GlobalContext, Type)] = for {
+    val genAccAndType: Gen[(GlobalContext, Type)] = Gen.delay(for {
       (leftSize, rightSize) <- splitSizeNonZero(size-1, min=2)
       (ctx2, left)  <- Gen.resize(leftSize, genSimpleAccTypeDecls(ctx, scope, z))
       scopeIncludingLeft <- const(scope + (z -> updatedType(scope, left)))
       (ctx3, right) <- Gen.resize(rightSize, genSimpleAccTypeDecls(ctx2, scopeIncludingLeft, z))
-    } yield (ctx3, updatedType(scope, AndType(left, right)))
+    } yield (ctx3, updatedType(scope, AndType(left, right))))
 
     // minSize(genFieldDecl)  = 2
     // minSize(genTypeDecl)   = 3
@@ -539,40 +541,33 @@ object DolGenerators {
   // to eliminate the prototype?
 
   def genAppInferenceProblem(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, InferenceProblem)] = {
-    ??? // TODO
-//    val genFromArg = for { // TODO better to add fun to scope?
-//      f <- const(su.newSymbol())
-//      x <- const(su.newSymbol())
-//      y <- const(su.newSymbol())
-//      arg <- genInferenceProblem(su, scope)
-//      argSupertype <- genSupertype(su, scope, arg.expectedType)
-//      res <- genInferenceProblem(su, scope + (x -> argSupertype))
-//      resType <- const(res.expectedType)
-//    } yield InferenceProblem(
-//      Let(f, Fun(x, argSupertype, res.term), Let(y, arg.term, App(f, y))),
-//      res.prototype,
-//      (arg.scope ++ res.scope) - x - f - y,
-//      Let(f,
-//        Fun(x, argSupertype, res.expected).withType(FunType(x, argSupertype, resType)),
-//        Let(y, arg.expected, App(f, y).withType(resType)).withType(resType)
-//        ).withType(resType))
-//
-//    var funsInScope = scope.filter{
-//      case (_, _: FunType) => true
-//      case _ => false
-//    }
-//
-//    if (funsInScope.size == 0) {
-//      genFromArg
-//    } else {
-//      val genFromScope = for {
-//        (f, FunType(x, xType, xResType)) <- oneOf(funsInScope.toSeq)
-//        y <- const(su.newSymbol()) // TODO vs picking y from scope?
-//        yType <- genSubtype(su, scope, xType)
-//        appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
-//      } yield InferenceProblem(App(f, y), Que, scope + (y -> yType), App(f, y).withType(appResType))
-//      oneOf(genFromArg, genFromScope)
-//    }
+    val genFromArg = for {
+      (ctx2, f) <- ctx.newSymbol()
+      (ctx3, y) <- ctx2.newSymbol()
+      (ctx4, funType @ FunType(x, xType, xResType)) <- genFunType(ctx3, scope) // TODO make it so that this can generate a typeproj to a funtype
+      ctx5 <- ctx4.withBinding(f -> funType)
+      (ctx6, argSubtype) <- genSubtype(ctx5, scope, xType)
+      ctx7 <- ctx6.withBinding(y -> argSubtype)
+      appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
+    } yield (ctx7, InferenceProblem(App(f, y), Que, scope, App(f, y).withType(appResType)))
+
+    var funsInScope = scope.filter{
+      case (_, _: FunType) => true
+      case _ => false
+    }
+
+    if (funsInScope.isEmpty) {
+      genFromArg
+    } else {
+      val genFromScope = for {
+        (f, FunType(x, xType, xResType)) <- oneOf(funsInScope.toSeq)
+        (ctx2, y) <- ctx.newSymbol()
+        (ctx3, yType) <- genSubtype(ctx2, scope, xType) // TODO make it so that this can pick yType from scope.
+        ctx4 <- ctx3.withBinding(y -> yType)
+        appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
+      } yield (ctx2, InferenceProblem(App(f, y), Que, scope + (y -> yType), App(f, y).withType(appResType)))
+      oneOf(genFromArg, genFromScope)
+    }
   }
 
     // TODO also: genAppInferenceProblemFromScope
