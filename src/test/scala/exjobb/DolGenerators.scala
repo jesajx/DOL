@@ -50,29 +50,38 @@ object DolGenerators {
 
   // TODO should some of these be Cogen rather then Gen?
 
-//  def genLowerPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
-//    case FunType(x, xType, resType) =>
-//      oneOf(
-//        const(typ),
-//        const(Que),
-//        for {
-//          xPrototype <- genUpperPrototypeFromType(su, scope, xType)
-//          resPrototype <- genLowerPrototypeFromType(su, scope, resType)
-//        } yield FunType(x, xPrototype, resPrototype))
-//    case _ => oneOf(const(Que), const(typ))
-//  }
-//  def genUpperPrototypeFromType(su: SymbolUniverse, scope: Scope, typ: Type): Gen[Prototype] = typ match {
-//    // TODO obj-types probably need special handling...
-//    case FunType(x, xType, resType) =>
-//      oneOf(
-//        const(typ),
-//        const(Que),
-//        for {
-//          xPrototype <- genLowerPrototypeFromType(su, scope, xType)
-//          resPrototype <- genUpperPrototypeFromType(su, scope, resType)
-//        } yield FunType(x, xPrototype, resPrototype))
-//    case _ => oneOf(const(Que), const(typ))
-//  }
+  // TODO Do we need both genLowerPrototypeFromType and genUpperPrototypeFromType?
+
+  /** Punch holes (Que) in typ to get a prototype.
+   */
+  def genPrototypeFromType(ctx: GlobalContext, scope: Scope, typ: Type): Gen[(GlobalContext, Prototype)] =
+    oneOf(
+      const((ctx, Que)),
+      typ match {
+        // TODO obj-types probably need special handling...
+        //case RecType(x, xType, resType) => TODO Prototypes inside rec? Can these happen in practice?
+        case FieldDecl(a, aType) =>
+          for {
+            (ctx2, aPrototype) <- genPrototypeFromType(ctx, scope, aType)
+          } yield (ctx2, FieldDecl(a, aPrototype))
+        case TypeDecl(a, aLowerType, aUpperType) =>
+          for {
+            (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, scope, aLowerType)
+            (ctx3, aUpperPrototype) <- genPrototypeFromType(ctx2, scope, aUpperType)
+          } yield (ctx3, TypeDecl(a, aLowerPrototype, aUpperPrototype))
+        case AndType(left, right) =>
+          for {
+            (ctx2, leftPrototype) <- genPrototypeFromType(ctx, scope, left)
+            (ctx3, rightPrototype) <- genPrototypeFromType(ctx2, scope, right)
+          } yield (ctx3, AndType(leftPrototype, rightPrototype))
+        case FunType(x, xType, resType) =>
+          for {
+            (ctx2, xPrototype) <- genPrototypeFromType(ctx, scope, xType)
+            (ctx3, resPrototype) <- genPrototypeFromType(ctx2, scope, resType)
+          } yield (ctx3, FunType(x, xPrototype, resPrototype))
+        case _ => const((ctx, typ))
+      }
+    )
 
 
 
@@ -85,7 +94,7 @@ object DolGenerators {
       else
         oneOf(const((ctx, subtype)), const((ctx, Top)))
     } else {
-      val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match {
+      val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match { // TODO !!!
 //        case FunType(x, xType, resType) if (size >= 3) =>
 //          Seq(for {
 //            subSize <- size - 1
