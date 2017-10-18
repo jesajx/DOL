@@ -32,16 +32,80 @@ object DolGenerators {
 
   def genGlobalScope(ctx: GlobalContext = GlobalContext()): Gen[GlobalContext] = const(ctx)
 
-  def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
-    if (size < 3)
-      Gen.fail
-    else for {
-      (argSize, resSize) <- splitSizeNonZero(size - 1)
-      (ctx2, x)   <- ctx.newSymbol()
-      (ctx3, arg) <- Gen.resize(argSize, genType(ctx2, scope))
-      (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope))
-    } yield (ctx4, FunType(x, arg, res))
+  // "State Monad".
+  sealed case class CtxGen[+A](g: GlobalContext => Gen[(GlobalContext, A)]) {
+    def toGen(ctx: GlobalContext = GlobalContext()): Gen[(GlobalContext, A)] = g(ctx)
+
+    def map[B](f: A => B): CtxGen[B] =
+      CtxGen{ctx0 =>
+        this.g(ctx0).map{case (ctx1,a) =>
+          val b = f(a)
+          (ctx1, b)
+        }
+      }
+
+    def flatMap[B](f: A => CtxGen[B]): CtxGen[B] =
+      CtxGen{ctx0 =>
+        this.g(ctx0).flatMap{case (ctx1, a) =>
+          for {
+            (ctx2, b) <- f(a).g(ctx1)
+          } yield (ctx2, b)
+        }
+      }
+
+    final class WithFilter(p: ((GlobalContext, A)) => Boolean) {
+      def map[B](f: A => B): CtxGen[B] =
+        CtxGen{ctx => g(ctx).withFilter(p).map{case (ctx2, a) => (ctx2, f(a))}}
+      def flatMap[B](f: A => CtxGen[B]): CtxGen[B] =
+        CtxGen{ctx =>
+          g(ctx).withFilter(p).flatMap{case (ctx2, a) => f(a).g(ctx2)}
+        }
+      def withFilter(q: A => Boolean): WithFilter = new WithFilter({case (ctx, a) => p((ctx, a)) && q(a)})
+    }
+    def withFilter(p: A => Boolean): WithFilter = new WithFilter({case (ctx2, a) => p(a)})
   }
+
+  object CtxGen {
+    val fail = CtxGen{_ => Gen.fail}
+
+    def sized[T](f: (Int => CtxGen[T])): CtxGen[T] =
+      CtxGen{ctx =>
+        Gen.sized{size =>
+          f(size).g(ctx)
+        }
+      }
+
+    def gen[T](g: Gen[T]): CtxGen[T] = CtxGen{ctx => g.map{x => (ctx, x)}}
+    def const[T](x: T): CtxGen[T] = CtxGen{ctx => Gen.const((ctx, x))}
+
+    def newSymbol(): CtxGen[Symbol] = CtxGen{ctx => ctx.newSymbol()}
+
+    def resize[T](size: Int, s: CtxGen[T]): CtxGen[T] = CtxGen{ctx => Gen.resize(size, s.g(ctx))}
+  }
+
+  def genFunType2(scope: Scope): CtxGen[Type] = CtxGen.sized{ size =>
+    if (size < 3)
+      CtxGen.fail
+    else for {
+      (argSize, resSize) <- CtxGen.gen[(Int, Int)](splitSizeNonZero(size - 1))
+      x   <- CtxGen.newSymbol()
+      arg <- CtxGen.resize(argSize, CtxGen{ctx => genType(ctx, scope)})
+      res <- CtxGen.resize(resSize, CtxGen{ctx => genType(ctx, scope)})
+    } yield FunType(x, arg, res)
+  }
+
+  def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] =
+    genFunType2(scope).toGen(ctx)
+  //def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
+  //  if (size < 3)
+  //    Gen.fail
+  //  else for {
+  //    (argSize, resSize) <- splitSizeNonZero(size - 1)
+  //    (ctx2, x)   <- ctx.newSymbol()
+  //    (ctx3, arg) <- Gen.resize(argSize, genType(ctx2, scope))
+  //    (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope))
+  //  } yield (ctx4, FunType(x, arg, res))
+  //}
 
 
 
@@ -65,10 +129,18 @@ object DolGenerators {
             (ctx2, aPrototype) <- genPrototypeFromType(ctx, scope, aType)
           } yield (ctx2, FieldDecl(a, aPrototype))
         case TypeDecl(a, aLowerType, aUpperType) =>
-          for {
-            (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, scope, aLowerType)
-            (ctx3, aUpperPrototype) <- genPrototypeFromType(ctx2, scope, aUpperType)
-          } yield (ctx3, TypeDecl(a, aLowerPrototype, aUpperPrototype))
+          //for {
+          //  (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, scope, aLowerType)
+          //  (ctx3, aUpperPrototype) <- genPrototypeFromType(ctx2, scope, aUpperType)
+          //} yield (ctx3, TypeDecl(a, aLowerPrototype, aUpperPrototype))
+          oneOf(
+            for {
+              (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, scope, aLowerType)
+            } yield (ctx2, TypeDecl(a, aLowerPrototype, aUpperType)),
+            for {
+              (ctx2, aUpperPrototype) <- genPrototypeFromType(ctx, scope, aUpperType)
+            } yield (ctx2, TypeDecl(a, aLowerType, aUpperPrototype))
+          )
         case AndType(left, right) =>
           for {
             (ctx2, leftPrototype) <- genPrototypeFromType(ctx, scope, left)
@@ -94,7 +166,7 @@ object DolGenerators {
       else
         oneOf(const((ctx, subtype)), const((ctx, Top)))
     } else {
-      val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match { // TODO !!!
+      val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match { // TODO!!!
 //        case FunType(x, xType, resType) if (size >= 3) =>
 //          Seq(for {
 //            subSize <- size - 1

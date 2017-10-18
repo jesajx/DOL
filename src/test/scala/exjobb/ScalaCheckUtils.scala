@@ -14,6 +14,11 @@ import org.scalacheck.Gen.someOf
 import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
 
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration._
+
 object ScalaCheckUtils {
 
   def splitSizeNonZero(size: Int, min: Int = 1): Gen[(Int, Int)] = {
@@ -24,7 +29,10 @@ object ScalaCheckUtils {
     } yield (left, size - left)
   }
 
-
+  def timeoutProp[T](timeout: Duration)(f: => Prop): Prop =
+    Prop.protect{
+      Await.result(Future{f}, timeout)
+    }
 
   // TODO Maybe make a wrapper around Gen to keep track of "minsize"?
   // Alternatively: don't write so many generators....
