@@ -32,80 +32,16 @@ object DolGenerators {
 
   def genGlobalScope(ctx: GlobalContext = GlobalContext()): Gen[GlobalContext] = const(ctx)
 
-  // "State Monad".
-  sealed case class CtxGen[+A](g: GlobalContext => Gen[(GlobalContext, A)]) {
-    def toGen(ctx: GlobalContext = GlobalContext()): Gen[(GlobalContext, A)] = g(ctx)
-
-    def map[B](f: A => B): CtxGen[B] =
-      CtxGen{ctx0 =>
-        this.g(ctx0).map{case (ctx1,a) =>
-          val b = f(a)
-          (ctx1, b)
-        }
-      }
-
-    def flatMap[B](f: A => CtxGen[B]): CtxGen[B] =
-      CtxGen{ctx0 =>
-        this.g(ctx0).flatMap{case (ctx1, a) =>
-          for {
-            (ctx2, b) <- f(a).g(ctx1)
-          } yield (ctx2, b)
-        }
-      }
-
-    final class WithFilter(p: ((GlobalContext, A)) => Boolean) {
-      def map[B](f: A => B): CtxGen[B] =
-        CtxGen{ctx => g(ctx).withFilter(p).map{case (ctx2, a) => (ctx2, f(a))}}
-      def flatMap[B](f: A => CtxGen[B]): CtxGen[B] =
-        CtxGen{ctx =>
-          g(ctx).withFilter(p).flatMap{case (ctx2, a) => f(a).g(ctx2)}
-        }
-      def withFilter(q: A => Boolean): WithFilter = new WithFilter({case (ctx, a) => p((ctx, a)) && q(a)})
-    }
-    def withFilter(p: A => Boolean): WithFilter = new WithFilter({case (ctx2, a) => p(a)})
-  }
-
-  object CtxGen {
-    val fail = CtxGen{_ => Gen.fail}
-
-    def sized[T](f: (Int => CtxGen[T])): CtxGen[T] =
-      CtxGen{ctx =>
-        Gen.sized{size =>
-          f(size).g(ctx)
-        }
-      }
-
-    def gen[T](g: Gen[T]): CtxGen[T] = CtxGen{ctx => g.map{x => (ctx, x)}}
-    def const[T](x: T): CtxGen[T] = CtxGen{ctx => Gen.const((ctx, x))}
-
-    def newSymbol(): CtxGen[Symbol] = CtxGen{ctx => ctx.newSymbol()}
-
-    def resize[T](size: Int, s: CtxGen[T]): CtxGen[T] = CtxGen{ctx => Gen.resize(size, s.g(ctx))}
-  }
-
-  def genFunType2(scope: Scope): CtxGen[Type] = CtxGen.sized{ size =>
+  def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
     if (size < 3)
-      CtxGen.fail
+      Gen.fail
     else for {
-      (argSize, resSize) <- CtxGen.gen[(Int, Int)](splitSizeNonZero(size - 1))
-      x   <- CtxGen.newSymbol()
-      arg <- CtxGen.resize(argSize, CtxGen{ctx => genType(ctx, scope)})
-      res <- CtxGen.resize(resSize, CtxGen{ctx => genType(ctx, scope)})
-    } yield FunType(x, arg, res)
+      (argSize, resSize) <- splitSizeNonZero(size - 1)
+      (ctx2, x)   <- ctx.newSymbol()
+      (ctx3, arg) <- Gen.resize(argSize, genType(ctx2, scope))
+      (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope))
+    } yield (ctx4, FunType(x, arg, res))
   }
-
-  def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] =
-    genFunType2(scope).toGen(ctx)
-  //def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
-  //  if (size < 3)
-  //    Gen.fail
-  //  else for {
-  //    (argSize, resSize) <- splitSizeNonZero(size - 1)
-  //    (ctx2, x)   <- ctx.newSymbol()
-  //    (ctx3, arg) <- Gen.resize(argSize, genType(ctx2, scope))
-  //    (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope))
-  //  } yield (ctx4, FunType(x, arg, res))
-  //}
 
 
 

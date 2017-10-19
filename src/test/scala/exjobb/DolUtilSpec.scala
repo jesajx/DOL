@@ -303,21 +303,20 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   // TODO property("NoFuture.varRaise -- raise(AndType(A, B), P) = raise(AndType(B, A), P)") = {
 
-
   property("NoFuture.varRaise -- A <: B ==> raise(A, P) <: raise(B, P)") = {
-    val generator: Gen[(GlobalContext, (Symbol, Symbol, Type, Type, Prototype))] = (for {
-      z <- CtxGen.newSymbol()
-      r <- CtxGen.newSymbol()
-      b <- CtxGen{genType(_, Map())}
-      a <- CtxGen{genSubtype(_, Map(), b)}
-      p <- CtxGen{genPrototypeFromType(_, Map(), b)}
-    } yield (r, z, NoFuture.eliminateRecursiveTypes(a, z), NoFuture.eliminateRecursiveTypes(b, z), p)
-    ).toGen(GlobalContext())
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type, Prototype)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, b) <- genType(ctx3, Map())
+      (ctx5, a) <- genSubtype(ctx4, Map(), b)
+      (ctx6, p) <- genPrototypeFromType(ctx5, Map(), b)
+    } yield (ctx6, r, z, NoFuture.eliminateRecursiveTypes(a, z), NoFuture.eliminateRecursiveTypes(b, z), p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
-    Prop.forAllNoShrink(generator){prettyProp{case (ctx, (r, z, a, b, p)) =>
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b, p) =>
       timeoutProp(30.seconds){
         val scope = ctx.globalScope
         val aRaiseP = NoFuture.varRaise(scope + (z -> a), r, z, p)
