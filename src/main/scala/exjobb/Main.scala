@@ -11,7 +11,7 @@ object Main {
   def main(args: Array[String]): Unit = {
 //lowerdebug()
 raisedebug()
-debugsub()
+//debugsub()
   }
 
   sealed case class GlobalContext(scope: Scope, nextSymbol: Int)
@@ -129,8 +129,8 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
   1,
   0,
   AndType(
-    TypeProj(33, 44),
-    TypeProj(22, 55)
+    FieldDecl(1, TypeProj(33, 44)),
+    FieldDecl(1, TypeProj(22, 55))
   ),
   //AndType(
   //  AndType(FieldDecl(2, Top), FieldDecl(3, TypeProj(4, 5))),
@@ -159,8 +159,8 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
   //  )
   //),
   AndType(
-    Que,
-    Que
+    FieldDecl(1, Que),
+    FieldDecl(1, Que)
   )
 )
 
@@ -208,7 +208,7 @@ println(s"TIME = ${(endTime - startTime) * 1e-9}")
 }
 
 def raisedebug(): Unit = {
-val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Symbol, Type, Prototype) =
+val (GlobalContext(scope1, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Symbol, Type, Prototype) =
 
 //(GlobalContext(Map(), 2), 1, 0, Bot, Top)
 
@@ -354,17 +354,62 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
 //  )
 //)
 
+//(
+//  GlobalContext(Map(4 -> TypeDecl(5, Bot, FieldDecl(6, Top))), 8),
+//  1,
+//  0,
+//  FunType(
+//    2,
+//    FunType(3, Top, Top),
+//    Top
+//  ),
+//  FunType(2, FunType(3, Que, Top), Top)
+//  //FunType(2, Que, Top)
+//)
+
 (
-  GlobalContext(Map(4 -> TypeDecl(5, Bot, FieldDecl(6, Top))), 8),
+  GlobalContext(
+    Map(4 -> TypeDecl(5, Top, Top), 9 -> TypeDecl(10, Top, Top)),
+    13
+  ),
   1,
   0,
-  FunType(
-    2,
-    FunType(3, Top, Top),
-    Top
+  AndType(
+    AndType(
+      TypeDecl(3, Bot, TypeProj(4, 5)),
+      AndType(
+        TypeDecl(3, Bot, TypeProj(4, 5)),
+        AndType(
+          TypeDecl(
+            6,
+            Bot,
+            FunType(7, Top, FieldDecl(8, TypeProj(9, 10)))
+          ),
+          FieldDecl(11, TypeProj(0, 3))
+        )
+      )
+    ),
+    FieldDecl(12, Bot)
   ),
-  FunType(2, FunType(3, Que, Top), Top)
-  //FunType(2, Que, Top)
+RecType(2,
+  AndType(
+    AndType(
+      TypeDecl(3, Bot, TypeProj(4, 5)),
+      AndType(
+        TypeDecl(3, Bot, TypeProj(4, 5)),
+        AndType(
+          TypeDecl(
+            6,
+            Bot,
+            FunType(7, Top, FieldDecl(8, TypeProj(9, 10)))
+          ),
+          FieldDecl(11, TypeProj(2, 3))
+        )
+      )
+    ),
+    FieldDecl(12, Bot)
+  )
+)
 )
 
 //(GlobalContext(Map(), 2), 1, 0, Bot, Que)
@@ -376,11 +421,11 @@ pprint.pprintln(res1, height=4000000)
 
 import NoFuture._
 
-val (numQues, labeledPrototype) = prepMatch(scope, r, p)
+val (numQues, labeledPrototype) = prepMatch(scope, r, eliminateRecursiveTypes(p, z))
 
 val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
 
-val constraint = gatherConstraints(scope, solveSet, a, labeledPrototype, Covariant, Set(), Set())
+val constraint = gatherConstraints(scope, solveSet, eliminateRecursiveTypes(a, z), labeledPrototype, Covariant, Set(), Set())
 
 
 pprint.pprintln(constraint, height=4000000)
@@ -408,9 +453,6 @@ val endTime = System.nanoTime()
 
 pprint.pprintln(res2, height=4000000)
 println(s"TIME = ${(endTime - startTime) * 1e-9}s")
-
-
-
 }
 
 def debugsub(): Unit = {

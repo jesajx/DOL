@@ -310,7 +310,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map())
+      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
       (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
       (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
     } yield (ctx6, r, z, a, p, p2)
@@ -332,10 +332,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, b) <- genType(ctx3, Map())
+      (ctx4, b) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
       (ctx5, a) <- genSubtype(ctx4, Map(), b)
       (ctx6, p) <- genPrototypeFromType(ctx5, Map(), b)
-    } yield (ctx6, r, z, NoFuture.eliminateRecursiveTypes(a, z), NoFuture.eliminateRecursiveTypes(b, z), p)
+    } yield (ctx6, r, z, a, b, p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
@@ -357,10 +357,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, b) <- genType(ctx3, Map())
+      (ctx4, b) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
       (ctx5, a) <- genSubtype(ctx4, Map(), b)
       (ctx6, p) <- genPrototypeFromType(ctx5, Map(), a)
-    } yield (ctx6, r, z, NoFuture.eliminateRecursiveTypes(a, z), NoFuture.eliminateRecursiveTypes(b, z), p)
+    } yield (ctx6, r, z, a, b, p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
@@ -383,9 +383,9 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map())
+      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
       (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
-    } yield (ctx5, r, z, NoFuture.eliminateRecursiveTypes(a, z), p)
+    } yield (ctx5, r, z, a, p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
@@ -480,4 +480,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
   // TODO typeProjectUpper: result does not contains rectypes?
   // TODO typeProjectLower -- multi.  (TODO: depends on lub....)
   // TODO lub: lattice properties
+
+  // TODO check eliminateVarUp by starting with a type with no vars, and then
+  // replacing parts with vars.  scope={},Int  --> scope={x->{T=Int}},x.T
 }

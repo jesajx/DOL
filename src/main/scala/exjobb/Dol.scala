@@ -336,7 +336,7 @@ object Dol {
     // Go grab field "a" in object "x".
     // Specifically: find T s.t. x: D, D <: {a: T}. If there are multiple
     // solutions return their intersection (AndType). On error return None.
-    def select(su: SymbolUniverse, scope: Scope, x: Symbol, a: Symbol): Option[Type] = {
+    def select(su: SymbolUniverse, scope: Scope, x: Symbol, a: Symbol): Option[Type] = { // TODO REM?
       def inner(scope: Scope, x: Symbol, a: Symbol, visited: Set[TypeProj]): Option[Type] = scope.get(x) match {
         case Some(RecType(y, yType)) =>
           for {
@@ -1085,7 +1085,7 @@ object Dol {
         case (RecType(x, xType), RecType(y, yType)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
         case (RecType(x, xType), RecType(y, yType)) if x == y =>
-          rec(scope = scope + (x -> xType), from=xType, to=yType, variance=variance) // TODO vs RigidVariance?
+          rec(scope = scope+(x -> xType), from=xType, to=yType, variance=variance) // TODO vs RigidVariance?
 
         case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
         case (Bot, FieldDecl(a, aType)) => rec(from=FieldDecl(a, Bot))
@@ -1170,6 +1170,7 @@ object Dol {
           val aUpperType = largest(from) // TODO get rid of all type-projections?
           MultiAndConstraint(Map(bProj -> (scope, aUpperType, Top, variance)))
 
+
         case (AndType(left, right), _) =>
           // TODO factor duplicate declarations first? i.e. AndType(FieldDef(a,A), FieldDef(a,B)) --> FieldDef(a, AndType(A,B)).
           // Probably a bad idea in case of typeprojs...
@@ -1210,13 +1211,13 @@ object Dol {
       }
     }
 
-    /** Least supertype R of `lowerTyp` such that R matches `upperPrototype`.
+    /** Least supertype R of `lowerType` such that R matches `upperPrototype`.
      * Return None if R does not exists.
      */
-    def raise(scope: Scope, r: Symbol, lowerTyp: Type, upperPrototype: Prototype): Option[Type] = {
+    def raise(scope: Scope, r: Symbol, lowerType: Type, upperPrototype: Prototype): Option[Type] = {
       val (numQues, labeledPrototype) = prepMatch(scope, r, upperPrototype)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
-      val constraint = gatherConstraints(scope, solveSet, lowerTyp, labeledPrototype, Covariant)
+      val constraint = gatherConstraints(scope, solveSet, lowerType, labeledPrototype, Covariant)
       solveConstraint(scope, solveSet, constraint, labeledPrototype)
     }
 
@@ -1796,6 +1797,12 @@ object Dol {
     r(scope.toList){newListScope =>
       cont(newListScope.toMap)
     }
+  }
+
+  def andTypeSeq(t: Type): Seq[Type] = t match {
+    case AndType(left, right) =>
+      andTypeSeq(left) ++ andTypeSeq(right)
+    case _ => Seq(t)
   }
 
   def defSize(d: Def): Int = d match {
