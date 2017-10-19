@@ -303,7 +303,31 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   // TODO property("NoFuture.varRaise -- raise(AndType(A, B), P) = raise(AndType(B, A), P)") = {
 
-  property("NoFuture.varRaise -- A <: B ==> raise(A, P) <: raise(B, P)") = {
+  // TODO varRaise -- p = genPrototypeFromType(B), p2 = genPrototypeFromType(P), raise(B, P2) <: raise(B; P)
+
+  property("NoFuture.varRaise -- p2 = genPrototype(p),  raise(a, p2) <: raise(a, p)") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Prototype, Prototype)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map())
+      (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
+      (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
+    } yield (ctx6, r, z, a, p, p2)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, p, p2) =>
+      timeoutProp(30.seconds){
+        val scope = ctx.globalScope
+        val aRaiseP = NoFuture.varRaise(scope + (z -> a), r, z, p)
+        val aRaiseP2 = NoFuture.varRaise(scope + (z -> a), r, z, p2)
+        (prettyNamed("aRaiseP2", aRaiseP2)
+          |: prettyNamed("aRaiseP", aRaiseP)
+          |: Prop.protect(aRaiseP != None && aRaiseP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP2.get), z, aRaiseP.get)))
+      }
+    }}
+  }
+
+
+  property("NoFuture.varRaise -- a <: b ==> raise(a, p) <: raise(b, p)") = {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type, Prototype)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()

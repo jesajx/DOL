@@ -17,6 +17,7 @@ import org.scalacheck.Shrink
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.Await
+import scala.util.Try
 import scala.concurrent.duration._
 
 object ScalaCheckUtils {
@@ -31,7 +32,7 @@ object ScalaCheckUtils {
 
   def timeoutProp[T](timeout: Duration)(f: => Prop): Prop =
     Prop.protect{
-      Await.result(Future{f}, timeout)
+      Await.result(Future{Try{f}}, timeout).get
     }
 
   // TODO Maybe make a wrapper around Gen to keep track of "minsize"?
