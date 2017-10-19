@@ -30,10 +30,8 @@ object ScalaCheckUtils {
     } yield (left, size - left)
   }
 
-  def timeoutProp[T](timeout: Duration)(f: => Prop): Prop =
-    Prop.protect{
-      Await.result(Future{Try{f}}, timeout).get
-    }
+  def timeout[T](timeout: Duration)(f: => T): T =
+    Await.result(Future{Try{f}}, timeout).get
 
   // TODO Maybe make a wrapper around Gen to keep track of "minsize"?
   // Alternatively: don't write so many generators....

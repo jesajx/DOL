@@ -315,14 +315,12 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
     } yield (ctx6, r, z, a, p, p2)
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, p, p2) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val aRaiseP = NoFuture.varRaise(scope + (z -> a), r, z, p)
-        val aRaiseP2 = NoFuture.varRaise(scope + (z -> a), r, z, p2)
-        (prettyNamed("aRaiseP2", aRaiseP2)
-          |: prettyNamed("aRaiseP", aRaiseP)
-          |: Prop.protect(aRaiseP != None && aRaiseP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP2.get), z, aRaiseP.get)))
-      }
+      val scope = ctx.globalScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
+      val aRaiseP2 = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p2)}
+      (prettyNamed("aRaiseP2", aRaiseP2)
+        |: prettyNamed("aRaiseP", aRaiseP)
+        |: Prop.protect(aRaiseP != None && aRaiseP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP2.get), z, aRaiseP.get)))
     }}
   }
 
@@ -341,14 +339,12 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b, p) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val aRaiseP = NoFuture.varRaise(scope + (z -> a), r, z, p)
-        val bRaiseP = NoFuture.varRaise(scope + (z -> b), r, z, p)
-        (prettyNamed("bRaiseP", bRaiseP)
-          |: prettyNamed("aRaiseP", aRaiseP)
-          |: Prop.protect(aRaiseP != None && bRaiseP != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP.get), z, bRaiseP.get)))
-      }
+      val scope = ctx.globalScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
+      val bRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> b), r, z, p)}
+      (prettyNamed("bRaiseP", bRaiseP)
+        |: prettyNamed("aRaiseP", aRaiseP)
+        |: Prop.protect(aRaiseP != None && bRaiseP != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP.get), z, bRaiseP.get)))
     }}
   }
 
@@ -366,14 +362,12 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b, p) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val aRaiseP = NoFuture.varLower(scope + (z -> a), r, z, p)
-        val bRaiseP = NoFuture.varLower(scope + (z -> b), r, z, p)
-        (prettyNamed("bRaiseP", bRaiseP)
-          |: prettyNamed("aRaiseP", aRaiseP)
-          |: Prop.protect(aRaiseP != None && bRaiseP != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP.get), z, bRaiseP.get)))
-      }
+      val scope = ctx.globalScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, p)}
+      val bRaiseP = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, p)}
+      (prettyNamed("bRaiseP", bRaiseP)
+        |: prettyNamed("aRaiseP", aRaiseP)
+        |: Prop.protect(aRaiseP != None && bRaiseP != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP.get), z, bRaiseP.get)))
     }}
   }
 
@@ -391,12 +385,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, p) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val b = NoFuture.varRaise(scope + (z -> a), r, z, p)
-        (prettyNamed("b", b)
-          |: Prop.protect(b != None && NoFuture.varIsSubtypeOf(scope + (z -> a), z, b.get)))
-      }
+      val scope = ctx.globalScope
+      val b = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
+      (prettyNamed("b", b)
+        |: Prop.protect(b != None && NoFuture.varIsSubtypeOf(scope + (z -> a), z, b.get)))
     }}
   }
 
@@ -413,12 +405,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, b, p) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val a = NoFuture.varLower(scope + (z -> b), r, z, p)
-        (prettyNamed("a", a)
-          |: Prop.protect(a != None && NoFuture.varIsSubtypeOf(scope + (z -> a.get), z, b)))
-      }
+      val scope = ctx.globalScope
+      val a = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, p)}
+      (prettyNamed("a", a)
+        |: Prop.protect(a != None && NoFuture.varIsSubtypeOf(scope + (z -> a.get), z, b)))
     }}
   }
 
@@ -440,12 +430,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val res = NoFuture.varRaise(scope + (z -> a), r, z, b)
-        (prettyNamed("res", res)
-          |: Prop.protect(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, b)))
-      }
+      val scope = ctx.globalScope
+      val res = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, b)}
+      (prettyNamed("res", res)
+        |: Prop.protect(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, b)))
     }}
   }
 
@@ -462,12 +450,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b) =>
-      timeoutProp(30.seconds){
-        val scope = ctx.globalScope
-        val res = NoFuture.varLower(scope + (z -> b), r, z, a)
-        (prettyNamed("res", res)
-          |: Prop.protect(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, a)))
-      }
+      val scope = ctx.globalScope
+      val res = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, a)}
+      (prettyNamed("res", res)
+        |: Prop.protect(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, a)))
     }}
   }
 

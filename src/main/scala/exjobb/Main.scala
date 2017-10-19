@@ -9,14 +9,31 @@ object Main {
   import NoFuture._
 
   def main(args: Array[String]): Unit = {
-//lowerdebug()
-raisedebug()
+lowerdebug()
+//raisedebug()
 //debugsub()
   }
 
   sealed case class GlobalContext(scope: Scope, nextSymbol: Int)
 
-def lowerdebug(): Unit ={
+  val pprintTerminalWidth = 80
+  val pprintWidth = pprintTerminalWidth
+  val pprintHeight = 1000
+
+  object P extends pprint.PPrinter(defaultWidth=pprintWidth, defaultHeight=pprintHeight) {
+    def named[T](name: String, x: T): String = {
+      val prefix = name + " = "
+      prefix + P(x, initialOffset=prefix.size).render
+    }
+    def namedln[T](name: String, x: T): Unit = {
+      val prefix = name + " = "
+      print(prefix)
+      P.pprintln(x, initialOffset=prefix.size)
+    }
+  }
+
+
+def lowerdebug(): Unit = {
 val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Symbol, Type, Prototype) =
 
 //(GlobalContext(Map(), 2), 1, 0, Bot, Top)
@@ -118,58 +135,104 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
 //    )
 //  )
 //)
-( // TODO debug slowness of dnf
-  GlobalContext(
-    Map(
-      33 -> TypeDecl(44, Bot, Top),
-      22 -> TypeDecl(55, Bot, Top)
-    ),
-    1000
-  ),
+
+//( // TODO debug slowness of dnf
+//  GlobalContext(
+//    Map(
+//      33 -> TypeDecl(44, Bot, Top),
+//      22 -> TypeDecl(55, Bot, Top)
+//    ),
+//    1000
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    FieldDecl(1, TypeProj(33, 44)),
+//    FieldDecl(1, TypeProj(22, 55))
+//  ),
+//  //AndType(
+//  //  AndType(FieldDecl(2, Top), FieldDecl(3, TypeProj(4, 5))),
+//  //  AndType(
+//  //    AndType(
+//  //      TypeDecl(9, Bot, Bot),
+//  //      AndType(
+//  //        FieldDecl(
+//  //          10,
+//  //          TypeDecl(
+//  //            11,
+//  //            Bot,
+//  //            AndType(
+//  //              FieldDecl(12, Top),
+//  //              FieldDecl(13, FieldDecl(14, Bot))
+//  //            )
+//  //          )
+//  //        ),
+//  //        TypeDecl(15, Bot, Bot)
+//  //      )
+//  //    ),
+//  //    AndType(
+//  //      TypeDecl(16, TypeProj(17, 18), TypeProj(17, 18)),
+//  //      TypeDecl(24, Top, Top)
+//  //    )
+//  //  )
+//  //),
+//  AndType(
+//    AndType(
+//    Que,
+//    Que
+//  ),
+//    AndType(
+//    Que,
+//    Que
+//  )
+//  )
+//  //AndType(
+//  //  FieldDecl(1, Que),
+//  //  FieldDecl(1, Que)
+//  //)
+//)
+
+(
+  GlobalContext(Map(13 -> TypeDecl(14, Bot, Top)), 15),
   1,
   0,
   AndType(
-    FieldDecl(1, TypeProj(33, 44)),
-    FieldDecl(1, TypeProj(22, 55))
+    AndType(
+      FieldDecl(2, Bot),
+      TypeDecl(
+        3,
+        Bot,
+        FieldDecl(
+          4,
+          FunType(
+            5,
+            AndType(
+              FieldDecl(6, Top),
+              FieldDecl(7, FunType(8, Top, FieldDecl(9, Bot)))
+            ),
+            Top
+          )
+        )
+      )
+    ),
+    AndType(
+      TypeDecl(10, Bot, Bot),
+      TypeDecl(
+        11,
+        FunType(12, Top, TypeProj(13, 14)),
+        FunType(12, Top, TypeProj(13, 14))
+      )
+    )
   ),
-  //AndType(
-  //  AndType(FieldDecl(2, Top), FieldDecl(3, TypeProj(4, 5))),
-  //  AndType(
-  //    AndType(
-  //      TypeDecl(9, Bot, Bot),
-  //      AndType(
-  //        FieldDecl(
-  //          10,
-  //          TypeDecl(
-  //            11,
-  //            Bot,
-  //            AndType(
-  //              FieldDecl(12, Top),
-  //              FieldDecl(13, FieldDecl(14, Bot))
-  //            )
-  //          )
-  //        ),
-  //        TypeDecl(15, Bot, Bot)
-  //      )
-  //    ),
-  //    AndType(
-  //      TypeDecl(16, TypeProj(17, 18), TypeProj(17, 18)),
-  //      TypeDecl(24, Top, Top)
-  //    )
-  //  )
-  //),
-  AndType(
-    FieldDecl(1, Que),
-    FieldDecl(1, Que)
-  )
+  AndType(AndType(Que, Que), AndType(TypeDecl(10, Bot, Bot), Que))
 )
 
 //(GlobalContext(Map(), 2), 1, 0, Bot, Que)
 
 val scope = scope1 + (z -> a)
 
-val res1 = NoFuture.varLower(scope, r, z, p)
-pprint.pprintln(res1, height=4000000)
+//val res1 = NoFuture.varLower(scope, r, z, p)
+//pprint.pprintln(res1, height=4000000)
 
 
 val (numQues, labeledPrototype) = prepMatch(scope, r, p)
@@ -184,24 +247,35 @@ val dnfStartTime = System.nanoTime()
 val dnfConstraint = dnf(constraint)
 val dnfEndTime = System.nanoTime()
 
+val cnfConstraint = cnf(constraint)
+
+//P.namedln("cnfConstraint", cnfConstraint)
 //pprint.pprintln(dnfConstraint, height=4000000)
 
 println(s"DNF TIME = ${(dnfEndTime - dnfStartTime) * 1e-9}s")
 
 def constraintSize(c: Constraint): Int = c match {
   case OrConstraint(a, b) => constraintSize(a) + constraintSize(b)
-  //case AndConstraint(a, b) => constraintSize(a) + constraintSize(b)
+  case AndConstraint(a, b) => constraintSize(a) + constraintSize(b)
   case _ => 1
 }
 println(s"size(constraint) = ${constraintSize(constraint)}")
 println(s"size(dnfConstraint) = ${constraintSize(dnfConstraint)}")
+println(s"size(cnfConstraint) = ${constraintSize(cnfConstraint)}")
 
-val startTime = System.nanoTime()
-val res2 = solveConstraint(scope, solveSet, constraint, labeledPrototype)
-val endTime = System.nanoTime()
+//val startTime = System.nanoTime()
+//val res2 = solveConstraint(scope, solveSet, constraint, labeledPrototype)
+//val endTime = System.nanoTime()
+//
+//pprint.pprintln(res2, height=4000000)
+//println(s"RES2 TIME = ${(endTime - startTime) * 1e-9}")
 
-pprint.pprintln(res2, height=4000000)
-println(s"TIME = ${(endTime - startTime) * 1e-9}")
+val res3startTime = System.nanoTime()
+val res3 = solveCnf(scope, solveSet, cnfConstraint, labeledPrototype)
+val res3endTime = System.nanoTime()
+
+pprint.pprintln(res3, height=4000000)
+println(s"RES3 TIME = ${(res3endTime - res3startTime) * 1e-9}")
 
 
 
@@ -367,50 +441,52 @@ val (GlobalContext(scope1, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Sym
 //  //FunType(2, Que, Top)
 //)
 
-(
-  GlobalContext(
-    Map(4 -> TypeDecl(5, Top, Top), 9 -> TypeDecl(10, Top, Top)),
-    13
-  ),
-  1,
-  0,
-  AndType(
-    AndType(
-      TypeDecl(3, Bot, TypeProj(4, 5)),
-      AndType(
-        TypeDecl(3, Bot, TypeProj(4, 5)),
-        AndType(
-          TypeDecl(
-            6,
-            Bot,
-            FunType(7, Top, FieldDecl(8, TypeProj(9, 10)))
-          ),
-          FieldDecl(11, TypeProj(0, 3))
-        )
-      )
-    ),
-    FieldDecl(12, Bot)
-  ),
-RecType(2,
-  AndType(
-    AndType(
-      TypeDecl(3, Bot, TypeProj(4, 5)),
-      AndType(
-        TypeDecl(3, Bot, TypeProj(4, 5)),
-        AndType(
-          TypeDecl(
-            6,
-            Bot,
-            FunType(7, Top, FieldDecl(8, TypeProj(9, 10)))
-          ),
-          FieldDecl(11, TypeProj(2, 3))
-        )
-      )
-    ),
-    FieldDecl(12, Bot)
-  )
-)
-)
+//(
+//  GlobalContext(
+//    Map(4 -> TypeDecl(5, Top, Top), 9 -> TypeDecl(10, Top, Top)),
+//    13
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    AndType(
+//      TypeDecl(3, Bot, TypeProj(4, 5)),
+//      AndType(
+//        TypeDecl(3, Bot, TypeProj(4, 5)),
+//        AndType(
+//          TypeDecl(
+//            6,
+//            Bot,
+//            FunType(7, Top, FieldDecl(8, TypeProj(9, 10)))
+//          ),
+//          FieldDecl(11, TypeProj(0, 3))
+//        )
+//      )
+//    ),
+//    FieldDecl(12, Bot)
+//  ),
+//RecType(2,
+//  AndType(
+//    AndType(
+//      TypeDecl(3, Bot, TypeProj(4, 5)),
+//      AndType(
+//        TypeDecl(3, Bot, TypeProj(4, 5)),
+//        AndType(
+//          TypeDecl(
+//            6,
+//            Bot,
+//            FunType(7, Top, FieldDecl(8, TypeProj(9, 10)))
+//          ),
+//          FieldDecl(11, TypeProj(2, 3))
+//        )
+//      )
+//    ),
+//    FieldDecl(12, Bot)
+//  )
+//)
+//)
+
+(GlobalContext(Map(), 2), 1, 0, Bot, Top)
 
 //(GlobalContext(Map(), 2), 1, 0, Bot, Que)
 
