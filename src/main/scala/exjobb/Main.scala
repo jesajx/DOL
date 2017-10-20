@@ -136,73 +136,73 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
 //  )
 //)
 
-( // TODO debug slowness of dnf
-  GlobalContext(
-    Map(
-      33 -> TypeDecl(44, Bot, Top),
-      22 -> TypeDecl(55, Bot, Top)
-    ),
-    1000
-  ),
-  1,
-  0,
-  AndType(
-    AndType(
-      FieldDecl(1, TypeProj(33, 44)),
-      FieldDecl(2, TypeProj(22, 55))
-    ),
-    AndType(
-      AndType(
-      FieldDecl(3, TypeProj(33, 44)),
-      FieldDecl(1, TypeProj(22, 55))
-    ),
-      AndType(
-      FieldDecl(3, TypeProj(33, 44)),
-      FieldDecl(1, TypeProj(22, 55))
-    )
-    )
-  ),
-  //AndType(
-  //  AndType(FieldDecl(2, Top), FieldDecl(3, TypeProj(4, 5))),
-  //  AndType(
-  //    AndType(
-  //      TypeDecl(9, Bot, Bot),
-  //      AndType(
-  //        FieldDecl(
-  //          10,
-  //          TypeDecl(
-  //            11,
-  //            Bot,
-  //            AndType(
-  //              FieldDecl(12, Top),
-  //              FieldDecl(13, FieldDecl(14, Bot))
-  //            )
-  //          )
-  //        ),
-  //        TypeDecl(15, Bot, Bot)
-  //      )
-  //    ),
-  //    AndType(
-  //      TypeDecl(16, TypeProj(17, 18), TypeProj(17, 18)),
-  //      TypeDecl(24, Top, Top)
-  //    )
-  //  )
-  //),
-  AndType(
-    AndType(
-      Que,
-      Que
-    ),
-    AndType(
-      Que,
-      Que
-    )
-  )
-  //AndType(
-  //  FieldDecl(1, Que),
-  //  FieldDecl(1, Que)
-  //)
-)
+//( // TODO debug slowness of dnf
+//  GlobalContext(
+//    Map(
+//      33 -> TypeDecl(44, Bot, Top),
+//      22 -> TypeDecl(55, Bot, Top)
+//    ),
+//    1000
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    AndType(
+//      FieldDecl(1, TypeProj(33, 44)),
+//      FieldDecl(2, TypeProj(22, 55))
+//    ),
+//    AndType(
+//      AndType(
+//      FieldDecl(3, TypeProj(33, 44)),
+//      FieldDecl(1, TypeProj(22, 55))
+//    ),
+//      AndType(
+//      FieldDecl(3, TypeProj(33, 44)),
+//      FieldDecl(1, TypeProj(22, 55))
+//    )
+//    )
+//  ),
+//  //AndType(
+//  //  AndType(FieldDecl(2, Top), FieldDecl(3, TypeProj(4, 5))),
+//  //  AndType(
+//  //    AndType(
+//  //      TypeDecl(9, Bot, Bot),
+//  //      AndType(
+//  //        FieldDecl(
+//  //          10,
+//  //          TypeDecl(
+//  //            11,
+//  //            Bot,
+//  //            AndType(
+//  //              FieldDecl(12, Top),
+//  //              FieldDecl(13, FieldDecl(14, Bot))
+//  //            )
+//  //          )
+//  //        ),
+//  //        TypeDecl(15, Bot, Bot)
+//  //      )
+//  //    ),
+//  //    AndType(
+//  //      TypeDecl(16, TypeProj(17, 18), TypeProj(17, 18)),
+//  //      TypeDecl(24, Top, Top)
+//  //    )
+//  //  )
+//  //),
+//  AndType(
+//    AndType(
+//      Que,
+//      Que
+//    ),
+//    AndType(
+//      Que,
+//      Que
+//    )
+//  )
+//  //AndType(
+//  //  FieldDecl(1, Que),
+//  //  FieldDecl(1, Que)
+//  //)
+//)
 
 //( // TODO debug slowness of dnf
 //  GlobalContext(
@@ -259,6 +259,37 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
 //  //  FieldDecl(1, Que)
 //  //)
 //)
+
+
+(
+  GlobalContext(Map(5 -> TypeDecl(6, Bot, Bot)), 16),
+  1,
+  0,
+  AndType(
+    AndType(
+      AndType(
+        TypeDecl(2, Bot, Bot),
+        FieldDecl(3, FunType(4, TypeProj(5, 6), FieldDecl(7, Top)))
+      ),
+      AndType(
+        FieldDecl(8, Bot),
+        AndType(FieldDecl(9, TypeProj(5, 6)), FieldDecl(10, Bot))
+      )
+    ),
+    AndType(
+      AndType(FieldDecl(11, Bot), FieldDecl(12, Bot)),
+      FieldDecl(
+        13,
+        FunType(14, TypeDecl(15, TypeProj(5, 6), TypeProj(5, 6)), Top)
+      )
+    )
+  ),
+  AndType(
+    AndType(AndType(Que, Que), AndType(Que, AndType(Que, Que))),
+    AndType(Que, Que)
+  )
+  //Que
+)
 
 //(
 //  GlobalContext(Map(13 -> TypeDecl(14, Bot, Top)), 15),
@@ -432,7 +463,7 @@ val scope = scope1 + (z -> a)
 //pprint.pprintln(res1, height=4000000)
 
 
-val (numQues, labeledPrototype) = prepMatch(scope, r, p)
+val (numQues, labeledPrototype) = prepMatch(scope, r, simplify(eliminateRecursiveTypes(p, z)))
 
 val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
 val solveSetVariance = gatherVariance2(r, labeledPrototype, Contravariant)
@@ -440,10 +471,10 @@ val solveSetVariance = gatherVariance2(r, labeledPrototype, Contravariant)
 val constraint = gatherConstraints(scope, solveSet, labeledPrototype, a, Contravariant, Set(), Set())
 
 
-P.namedln("constraint", constraint)
+//P.namedln("constraint", constraint)
 
 val dnfStartTime = System.nanoTime()
-val dnfConstraint = dnf(constraint)
+//val dnfConstraint = dnf(constraint)
 val dnfEndTime = System.nanoTime()
 
 val cnfStartTime = System.nanoTime()
@@ -477,10 +508,10 @@ def shortenlistlist(listlist: Stream[Stream[Constraint]]) =
     }
   }}
 
-val dl = dnfLists(dnfConstraint)
+//val dl = dnfLists(dnfConstraint)
 //P.namedln("dl", shortenlistlist(dl))
 //P.namedln("dl", dl)
-P.namedln("dl.size", dl.size)
+//P.namedln("dl.size", dl.size)
 
 val cl = cnfLists(cnfConstraint)
 //P.namedln("cl", shortenlistlist(cl))
@@ -506,8 +537,8 @@ def constraintSize(c: Constraint): Int = c match {
   case _ => 1
 }
 println(s"size(constraint) = ${constraintSize(constraint)}")
-println(s"size(dnfConstraint) = ${constraintSize(dnfConstraint)}")
-println(s"size(cnfConstraint) = ${constraintSize(cnfConstraint)}")
+//println(s"size(dnfConstraint) = ${constraintSize(dnfConstraint)}")
+//println(s"size(cnfConstraint) = ${constraintSize(cnfConstraint)}")
 
 
 val startTime = System.nanoTime()
@@ -741,7 +772,7 @@ pprint.pprintln(res1, height=4000000)
 
 import NoFuture._
 
-val (numQues, labeledPrototype) = prepMatch(scope, r, eliminateRecursiveTypes(p, z))
+val (numQues, labeledPrototype) = prepMatch(scope, r, simplify(eliminateRecursiveTypes(p, z)))
 
 val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
 

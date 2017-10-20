@@ -1129,7 +1129,7 @@ object Dol {
       (firstMap.keys == secondMap.keys
         && mapIntersect(firstMap, secondMap){
           case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(su, scope, aTerm, bTerm)
-          case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypes(su, scope, aType, bType)
+          case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypesOLD(su, scope, aType, bType)
           case _ => false
         }.values.forall{(x: Boolean) => x})
     }
@@ -1139,7 +1139,7 @@ object Dol {
       val assignedTypesEqual = (for {
         firstType <- first.assignedTypeOption
         secondType <- second.assignedTypeOption
-      } yield equalTypes(su, scope, firstType, secondType)).getOrElse(false)
+      } yield equalTypesOLD(su, scope, firstType, secondType)).getOrElse(false)
 
       assignedTypesEqual && ((first, second) match {
         case (Var(_), Var(_))       => (first == second)
@@ -1149,10 +1149,10 @@ object Dol {
           (equalTerms(su, scope, xTerm, yTerm)
             && equalTerms(su, scope, xResTerm, yResTerm))
         case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x == y =>
-          (equalTypes(su, scope, xType, yType)
+          (equalTypesOLD(su, scope, xType, yType)
             && equalDefs(su, scope, xBody, yBody))
         case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x == y =>
-          (equalTypes(su, scope, xType, yType)
+          (equalTypesOLD(su, scope, xType, yType)
             && equalTerms(su, scope, xBody, yBody))
         case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x != y =>
           equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
@@ -1425,11 +1425,87 @@ object Dol {
       }
     }
 
+    /** Find an equivalent prototype, with fewer nodes.
+     */
+    def simplify(prototype: Prototype): Prototype = prototype match {
+      case _: AndType =>
+
+        def simplifyFieldDecls(seq: Seq[FieldDecl]): Seq[FieldDecl] = {
+          seq.groupBy{case FieldDecl(a, _) => a}.map{case (a, ls) =>
+            FieldDecl(a, simplify(ls.map{case FieldDecl(_, aType) => aType}.reduce{andType(_, _)}))
+          }.toSeq
+        }
+        def simplifyTypeDecls(seq: Seq[TypeDecl]): Seq[TypeDecl] = {
+          seq.map{simplify}.asInstanceOf[Seq[TypeDecl]]
+          // TODO a -> TypeDecl(lub(lowerBounds), glb(upperBounds))?
+        }
+        def simplifyFunTypes(seq: Seq[FunType]): Seq[FunType] = {
+          seq.map{simplify}.asInstanceOf[Seq[FunType]]
+          // TODO if f and g are in seq, and f <: g, then remove g from seq?
+        }
+
+        def simplifyRecTypes(seq: Seq[RecType]): Seq[RecType] = {
+          seq.map{simplify}.asInstanceOf[Seq[RecType]]
+          // NOTE: We can't merge RecTypes or a big scary monster will come
+          // and eat us.
+        }
+
+        sealed trait Group
+        object GroupQue       extends Group
+        object GroupTop       extends Group
+        object GroupBot       extends Group
+        object GroupErrorType extends Group
+        object GroupTypeProj  extends Group
+        object GroupFieldDecl extends Group
+        object GroupTypeDecl  extends Group
+        object GroupFunType   extends Group
+        object GroupRecType   extends Group
+        object GroupMisc      extends Group
+
+        val grouped = andTypeSeq(prototype).groupBy{
+          case Que          => GroupQue
+          case Top          => GroupTop
+          case Bot          => GroupBot
+          case ErrorType    => GroupErrorType
+          case _: TypeProj  => GroupTypeProj
+          case _: FieldDecl => GroupFieldDecl
+          case _: TypeDecl  => GroupTypeDecl
+          case _: FunType   => GroupFunType
+          case _: RecType   => GroupRecType
+          case _            => GroupMisc
+        }
+        if (grouped.contains(GroupErrorType))
+          ErrorType
+        else if (grouped.contains(GroupBot))
+          Bot // TODO don't?
+        else if (grouped.contains(GroupTop) && grouped.size == 1)
+          Top
+        else grouped.map{
+          case (GroupQue,       ls) => GroupQue       -> ls.toSet.toSeq
+          case (GroupTop,       ls) => GroupTop       -> Seq()
+          case (GroupTypeProj,  ls) => GroupTypeProj  -> ls.toSet.toSeq
+          case (GroupFieldDecl, ls) => GroupFieldDecl -> simplifyFieldDecls(ls.asInstanceOf[Seq[FieldDecl]])
+          case (GroupTypeDecl,  ls) => GroupTypeDecl  -> simplifyTypeDecls(ls.asInstanceOf[Seq[TypeDecl]])
+          case (GroupFunType,   ls) => GroupFunType   -> simplifyFunTypes(ls.asInstanceOf[Seq[FunType]])
+          case (GroupRecType,   ls) => GroupRecType   -> simplifyRecTypes(ls.asInstanceOf[Seq[RecType]])
+          case (misc @ _,      ls)  => misc           -> ls
+        }.values.flatten.reduce{AndType(_, _)}
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        TypeDecl(a, simplify(aLowerType), simplify(aUpperType))
+      case FieldDecl(a, aType) =>
+        FieldDecl(a, simplify(aType))
+      case FunType(x, xType, xResType) =>
+        FunType(x, simplify(xType), simplify(xResType))
+      //case RecType(x, xType) =>
+      //  RecType(x, simplify(xType)) // TODO Is it okay to change the inside of a RecType?
+      case _ => prototype
+    }
+
     /** Least supertype R of `lowerType` such that R matches `upperPrototype`.
      * Return None if R does not exists.
      */
     def raise(scope: Scope, r: Symbol, lowerType: Type, upperPrototype: Prototype): Option[Type] = {
-      val (numQues, labeledPrototype) = prepMatch(scope, r, upperPrototype)
+      val (numQues, labeledPrototype) = prepMatch(scope, r, simplify(upperPrototype))
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
       val solveSetVariance = gatherVariance2(r, labeledPrototype, Covariant)
       val constraint = gatherConstraints(scope, solveSet, lowerType, labeledPrototype, Covariant)
@@ -1440,7 +1516,7 @@ object Dol {
      * Return None if L does not exists.
      */
     def lower(scope: Scope, r: Symbol, lowerPrototype: Prototype, upperType: Type): Option[Type] = {
-      val (numQues, labeledPrototype) = prepMatch(scope, r, lowerPrototype)
+      val (numQues, labeledPrototype) = prepMatch(scope, r, simplify(lowerPrototype))
       val solveSetVariance = gatherVariance2(r, labeledPrototype, Contravariant)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
       val constraint = gatherConstraints(scope, solveSet, labeledPrototype, upperType, Contravariant)
@@ -1515,7 +1591,12 @@ object Dol {
       // TODO maybe factor inner out into separate function?
       val zType = eliminateRecursiveTypes(scope(z), z)
       val zSupertype = eliminateRecursiveTypes(supertype, z)
-      isSubtypeOf(scope, zType, zSupertype, Set(), Set())
+      isSubtypeOf(scope, zType, zSupertype)
+    }
+
+    def equalTypes(scope: Scope, first: Type, second: Type): Boolean = {
+      (isSubtypeOf(scope, first, second)
+        && isSubtypeOf(scope, second, first))
     }
 
     /** Check if types are equal by subtyping.
@@ -1527,7 +1608,8 @@ object Dol {
         && varIsSubtypeOf(scope + (z -> second), z, zType))
     }
 
-    def equalTypes(su: SymbolUniverse, scope: Scope, first: Type, second: Type): Boolean = {
+
+    def equalTypesOLD(su: SymbolUniverse, scope: Scope, first: Type, second: Type): Boolean = {
       val z = su.newSymbol()
       varEqualTypes(scope + (z -> first), z, second)
     }

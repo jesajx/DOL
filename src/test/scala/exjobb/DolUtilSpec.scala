@@ -61,17 +61,30 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
-  // TODO property("NoFuture.equalTypes -- negative")
+  // TODO property("NoFuture.equalTypesOLD -- negative")
 
-  property("NoFuture.equalTypes -- positive") = {
+  property("NoFuture.equalTypesOLD -- positive") = {
     val generator: Gen[(SymbolUniverse, Scope, Type, Type)] = for {
       ctx <- genGlobalScope()
       (ctx2, typ) <- genType(ctx, Map())
     } yield (new SymbolUniverse(ctx2.nextSymbol), ctx2.globalScope, typ, typ)
     Prop.forAllNoShrink(generator){prettyProp{ case (su, scope, x, upper) =>
-      NoFuture.equalTypes(su, scope, x, upper)
+      NoFuture.equalTypesOLD(su, scope, x, upper)
     }}
   }
+
+  property("NoFuture.varEqualTypes -- positive") = {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, typ) <- genType(ctx2, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+    } yield (ctx3, z, typ, typ)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, left, right) =>
+      NoFuture.varEqualTypes(ctx.globalScope + (z -> left), z, right)
+    }}
+  }
+
+  // TODO varEqualType: a == obfuscate(a)
 
   // TODO allTypeMembers
 
@@ -154,7 +167,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     // TODO test multiple declarations (should result in AndType)
     Prop.forAllNoShrink(generator){prettyProp{case (su, scope, x, a, aUpperType) =>
       val res = NoFuture.typeProjectUpper(scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(su, scope, res.get, aUpperType))
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypesOLD(su, scope, res.get, aUpperType))
     }}
   }
 
@@ -174,7 +187,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     // TODO test multiple declarations (should result in AndType)
     Prop.forAllNoShrink(generator){prettyProp{case (su, scope, x, a, aUpperType) =>
       val res = NoFuture.typeProjectLower(scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypes(su, scope, res.get, aUpperType))
+      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypesOLD(su, scope, res.get, aUpperType))
     }}
   }
 
@@ -200,7 +213,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     Prop.forAllNoShrink(generator){prettyProp{case (su, scope, x, a, aUpperType) =>
       val res = NoFuture.typeProjectUpper(scope, x, a)
       val resLabel = prettyNamed("res", res)
-      resLabel |: Prop.all(res != None && NoFuture.equalTypes(su, scope, res.get, aUpperType))
+      resLabel |: Prop.all(res != None && NoFuture.equalTypesOLD(su, scope, res.get, aUpperType))
     }}
   }
 
@@ -217,7 +230,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       val lub_ba = lub(b, a)
       (prettyNamed("lub(a, b)", lub_ab)
         |: prettyNamed("lub(b, a)", lub_ba)
-        |: Prop.all(NoFuture.equalTypes(su, scope, lub_ab, lub_ba)))
+        |: Prop.all(NoFuture.equalTypesOLD(su, scope, lub_ab, lub_ba)))
     }}
   }
 
@@ -240,7 +253,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
         |: prettyNamed("lub(a, lub(b, c))", a_bc)
         |: prettyNamed("lub(a, b)", ab)
         |: prettyNamed("lub(lub(a, b), c)", ab_c)
-        |: Prop.all(NoFuture.equalTypes(su, scope, a_bc, ab_c)))
+        |: Prop.all(NoFuture.equalTypesOLD(su, scope, a_bc, ab_c)))
     }}
   }
 
@@ -265,7 +278,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
         |: prettyNamed("lub(a, b))", lub_ab)
         |: prettyNamed("lub(a, glb(a, b))", lubRes)
         |: prettyNamed("lub(lub(a, b), c)", glbRes)
-        |: Prop.all(NoFuture.equalTypes(su, scope, lubRes, glbRes)))
+        |: Prop.all(NoFuture.equalTypesOLD(su, scope, lubRes, glbRes)))
     }}
   }
 
@@ -280,7 +293,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       def lub(left: Type, right: Type) = NoFuture.leastCommonSupertype(scope, left, right)
       val lub_ab = lub(a, b)
       (prettyNamed("lub(a, b)", lub_ab)
-        |: Prop.all(NoFuture.equalTypes(su, scope, lub_ab, b)))
+        |: Prop.all(NoFuture.equalTypesOLD(su, scope, lub_ab, b)))
     }}
   }
 
@@ -295,7 +308,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       def glb(left: Type, right: Type) = NoFuture.greatestCommonSubtype(scope, left, right)
       val glb_ab = glb(a, b)
       (prettyNamed("glb(a, b)", glb_ab)
-        |: Prop.all(NoFuture.equalTypes(su, scope, glb_ab, a)))
+        |: Prop.all(NoFuture.equalTypesOLD(su, scope, glb_ab, a)))
     }}
   }
 
@@ -413,7 +426,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       val scope = ctx.globalScope
       val res = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, b)}
       (prettyNamed("res", res)
-        |: Prop.protect(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, b)))
+        |: Prop.protect(res != None && NoFuture.equalTypes(scope, res.get, b)))
     }}
   }
 
@@ -433,7 +446,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       val scope = ctx.globalScope
       val res = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, a)}
       (prettyNamed("res", res)
-        |: Prop.protect(res != None && NoFuture.equalTypes(new SymbolUniverse(ctx.nextSymbol), scope, res.get, a)))
+        |: Prop.protect(res != None && NoFuture.equalTypes(scope, res.get, a)))
     }}
   }
 
