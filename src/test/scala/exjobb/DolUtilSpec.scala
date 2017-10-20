@@ -305,27 +305,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   // TODO varRaise -- p = genPrototypeFromType(B), p2 = genPrototypeFromType(P), raise(B, P2) <: raise(B; P)
 
-  property("NoFuture.varRaise -- p2 = genPrototype(p),  raise(a, p2) <: raise(a, p)") = {
-    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Prototype, Prototype)] = for {
-      ctx1 <- genGlobalScope()
-      (ctx2, z) <- ctx1.newSymbol()
-      (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
-      (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
-      (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
-    } yield (ctx6, r, z, a, p, p2)
-    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, p, p2) =>
-      val scope = ctx.globalScope
-      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
-      val aRaiseP2 = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p2)}
-      (prettyNamed("aRaiseP2", aRaiseP2)
-        |: prettyNamed("aRaiseP", aRaiseP)
-        |: Prop.protect(aRaiseP != None && aRaiseP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP2.get), z, aRaiseP.get)))
-    }}
-  }
-
-
-  property("NoFuture.varRaise -- a <: b ==> raise(a, p) <: raise(b, p)") = {
+  property("NoFuture.varRaise -- a <: b; p=gen(b) ==> raise(a, p) <: raise(b, p)") = {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type, Prototype)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
@@ -348,7 +328,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
-  property("NoFuture.varLower -- a <: b ==> lower(a, p) <: lower(b, p)") = {
+  property("NoFuture.varLower -- a <: b ; p=gen(a) ==> lower(a, p) <: lower(b, p)") = {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type, Prototype)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
@@ -457,6 +437,74 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
+  property("NoFuture.varRaise -- p2 = genPrototype(p),  raise(a, p2) <: raise(a, p)") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Prototype, Prototype)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
+      (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
+    } yield (ctx6, r, z, a, p, p2)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, p, p2) =>
+      val scope = ctx.globalScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
+      val aRaiseP2 = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p2)}
+      (prettyNamed("aRaiseP2", aRaiseP2)
+        |: prettyNamed("aRaiseP", aRaiseP)
+        |: Prop.protect(aRaiseP != None && aRaiseP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP2.get), z, aRaiseP.get)))
+    }}
+  }
+
+  property("NoFuture.varLower -- p2 = genPrototype(p),  lower(a, p) <: lower(a, p2)") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Prototype, Prototype)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
+      (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
+    } yield (ctx6, r, z, a, p, p2)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, p, p2) =>
+      val scope = ctx.globalScope
+      val aLowerP = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, p)}
+      val aLowerP2 = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, p2)}
+      (prettyNamed("aLowerP2", aLowerP2)
+        |: prettyNamed("aLowerP", aLowerP)
+        |: Prop.protect(aLowerP != None && aLowerP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aLowerP.get), z, aLowerP2.get)))
+    }}
+  }
+
+  property("NoFuture.varRaise -- raise(a, Que) = a") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+    } yield (ctx4, r, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a) =>
+      val scope = ctx.globalScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, Que)}
+      (prettyNamed("aRaiseP", aRaiseP)
+        |: Prop.protect(aRaiseP != None && NoFuture.varEqualTypes(scope + (z -> aRaiseP.get), z, a)))
+    }}
+  }
+
+
+  property("NoFuture.varLower -- lower(a, Que) = a") = {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+    } yield (ctx4, r, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a) =>
+      val scope = ctx.globalScope
+      val aLowerP = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, Que)}
+      (prettyNamed("aLowerP", aLowerP)
+        |: Prop.protect(aLowerP != None && NoFuture.varEqualTypes(scope + (z -> aLowerP.get), z, a)))
+    }}
+  }
 
   // TODO solveConstraint
 
