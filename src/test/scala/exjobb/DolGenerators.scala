@@ -157,31 +157,26 @@ object DolGenerators {
         const((ctx, Bot))
     } else {
       val extra: Seq[Gen[(GlobalContext, Type)]] = supertype match {
-//        case FunType(x, xType, resType) if (size >= 3) =>
-//          Seq(for {
-//            subSize <- size - 1
-//            argSize <- Gen.choose(1, subSize)
-//            resSize <- subSize - argSize
-//            // TODO is this correct or is it necessary to do a
-//            // varEliminatingTransform or similar?
-//            xSupertype <- Gen.resize(argSize, genSupertype(su, scope, xType, visited))
-//            resSubtype <- Gen.resize(resSize, genSupertype(su, scope + (x -> xSupertype), resType, visited))
-//            // TODO supertypes of projs? // remove/keep/supertype
-//          } yield FunType(x, xSupertype, resSubtype))
-//        case AndType(left, right) if (size >= 3) =>
-//          Seq(for {
-//            leftGen <- genSupertype(su, scope, left, visited)
-//            rightGen <- genSupertype(su, scope, right, visited)
-//          } yield AndType(leftGen, rightGen))
-//        case RecType(x, xType) if (size >= 2) =>
-//          Seq(for {
-//            xSubtype <- genSubtype(su, scope + (x -> xType), xType, visited)
-//          } yield RecType(x, xSubtype))
-//        case aProj @ TypeProj(x, a) if !visited(aProj) => // TODO visitedSet
-//          NoFuture.typeProjectLower(su, scope, x, a) match {
-//            case Some(aLowerType) => Seq(genSubtype(su, scope, aLowerType, visited + aProj))
-//            case None => ???; Seq()
-//          }
+        case FunType(x, xType, resType) if (size >= 3) =>
+          Seq(for {
+            (argSize, resSize) <- splitSizeNonZero(size - 1)
+            // TODO is this correct or is it necessary to do a
+            // varEliminatingTransform or similar?
+            (ctx2, xSupertype) <- Gen.resize(argSize, genSupertype(ctx, scope, xType, visited))
+            (ctx3, resSubtype) <- Gen.resize(resSize, genSubtype(ctx2, scope + (x -> xSupertype), resType, visited))
+            // TODO supertypes of projs? // remove/keep/supertype
+          } yield (ctx3, FunType(x, xSupertype, resSubtype)))
+        case AndType(left, right) if (size >= 3) =>
+          Seq(for {
+            (leftSize, rightSize) <- splitSizeNonZero(size - 1)
+            (ctx2, leftGen)  <- Gen.resize(leftSize, genSubtype(ctx, scope, left, visited))
+            (ctx3, rightGen) <- Gen.resize(rightSize, genSubtype(ctx2, scope, right, visited))
+          } yield (ctx3, AndType(leftGen, rightGen)))
+        case aProj @ TypeProj(x, a) if !visited(aProj) =>
+          NoFuture.typeProjectLower(ctx.globalScope ++ scope, x, a) match {
+            case Some(aLowerType) => Seq(Gen.resize(size, genSubtype(ctx, scope, aLowerType, visited + aProj)))
+            case None => ???; Seq()
+          }
 //        case FieldDecl(a, aType) =>
 //          Seq(for {
 //            aSubtype <- genSubtype(su, scope, aType, visited)
@@ -194,6 +189,8 @@ object DolGenerators {
         case _ =>
           Seq()
       }
+
+      // TODO AndType(supertype, genType)
 
       oneOf(const((ctx, supertype)), const((ctx, Bot)), extra: _*)
     }

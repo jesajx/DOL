@@ -316,7 +316,7 @@ object Dol {
         case bProj @ TypeProj(y, b) =>
           typeProjectUpper(scope, y, b).map{inner(scope, _, a, visited + bProj)}.flatten
         case TypeDecl(b, bLowerType, _) if a == b => Some(bLowerType)
-        case Bot => Some(Bot) // TODO <: TypeDecl(a, x.a..x.a) <: Top?
+        case Bot => Some(Top) // TODO <: TypeDecl(a, x.a..x.a) <: Top?
         case _   => None
       }
       for {
@@ -425,7 +425,7 @@ object Dol {
     // TODO does lub and glb need to share visited? probably...
 
     // TODO reintroduce OrType? and have lub(a,b) = simplify(OrType(a, b))?
-    def leastCommonSupertype(scope: Scope, lhs: Type, rhs: Type): Type = {
+    def leastCommonSupertype(scope: Scope, lhs: Type, rhs: Type): Type = { // TODO do we need to unwrap rectypes here too?
       def inner(scope: Scope, lhs: Type, rhs: Type, visitedLeft: Set[TypeProj], visitedRight: Set[TypeProj]): Type = (lhs, rhs) match {
         case (Top, _) | (_, Top) => Top
         case (Bot, _) => rhs
@@ -450,11 +450,20 @@ object Dol {
             inner(scope, lhs, bUpperType, visitedLeft, visitedRight + bProj)) // TODO is this correct?
 
         case (aProj @ TypeProj(x, a), _) =>
-          val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
-          inner(scope, aUpperType, rhs, visitedLeft + aProj, visitedRight)
+          if (isSubtypeOf(scope, rhs, aProj, visitedLeft, visitedRight)) // TODO
+            aProj
+          else {
+            val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+            inner(scope, aUpperType, rhs, visitedLeft + aProj, visitedRight)
+          }
+
         case (_, bProj @ TypeProj(y, b))  =>
-          val bUpperType = if (visitedRight(bProj)) Bot else typeProjectUpper(scope, y, b).getOrElse{error()}
-          inner(scope, lhs, bUpperType, visitedLeft, visitedRight + bProj)
+          if (isSubtypeOf(scope, lhs, bProj, visitedLeft, visitedRight)) // TODO
+            bProj
+          else {
+            val bUpperType = if (visitedRight(bProj)) Bot else typeProjectUpper(scope, y, b).getOrElse{error()}
+            inner(scope, lhs, bUpperType, visitedLeft, visitedRight + bProj)
+          }
 
         case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
           inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight)
@@ -474,6 +483,12 @@ object Dol {
           Top
       }
       inner(scope, lhs, rhs, Set(), Set())
+      //if (isSubtypeOf(scope, lhs, rhs)) // TODO inefficient?
+      //  rhs
+      //else if (isSubtypeOf(scope, rhs, lhs))
+      //  lhs
+      //else
+      //  inner(scope, lhs, rhs, Set(), Set())
     }
 
     def greatestCommonSubtype(scope: Scope, left: Type, right: Type): Type = andType(left, right) // TODO always correct? // TODO simplify?
@@ -541,7 +556,7 @@ object Dol {
     def typeMin(scope: Scope, a: Type, b: Type): Option[Type] = {
       if (isSubtypeOf(scope, a, b))
         Some(a)
-      else if (isSubtypeOf(scope, a, b))
+      else if (isSubtypeOf(scope, b, a))
         Some(b)
       else
         None
@@ -550,7 +565,7 @@ object Dol {
     def typeMax(scope: Scope, a: Type, b: Type): Option[Type] = {
       if (isSubtypeOf(scope, a, b))
         Some(b)
-      else if (isSubtypeOf(scope, a, b))
+      else if (isSubtypeOf(scope, b, a))
         Some(a)
       else
         None
@@ -579,7 +594,7 @@ object Dol {
           }
           opt match {
             case Some(typ) => Solution(typ)
-            case None => NoSolution
+            case None      => NoSolution
           }
         case (Solution(leftType), _)  => Solution(leftType)
         case (_, Solution(rightType)) => Solution(rightType)
@@ -589,180 +604,75 @@ object Dol {
     // TODO constraints and variance should be calculated separately...
 
     def solveConstraint(topScope: Scope, solveSet: Set[TypeProj], solveSetVariance: Map[TypeProj, Variance], constraint: Constraint, pattern: Type, topVariance: Variance): Option[Type] = {
-      //if (true) return solveCnf(topScope, solveSet, constraint, pattern, topVariance) // TODO
-
       val defaults: ConstraintMap = solveSet.map(p => (p -> (Map(): Scope, Bot, Top))).toMap
 
-      def subsolve(constraint: Constraint): Option[ConstraintMap] = constraint match {
-        case MultiAndConstraint(m) => Some(m)//Some(defaults ++ m)
-        case AndConstraint(left, right) =>
-          for {
-            leftRes  <- subsolve(left)
-            rightRes <- subsolve(right)
-          } yield mergeConstraints(leftRes, rightRes)
-        case TrueConstraint =>
-          Some(defaults)
-        case FalseConstraint => // FalseConstraints
-          None
-        case _ => // OrConstraint
-          ??? // should not happen if DNF.
-      }
-
-
-      def solve(constraint: Constraint): SolveResult = constraint match {
-        case OrConstraint(left, right) =>
-          orSolveResult(topScope, topVariance, solve(left), solve(right))
-        case _ =>
-          subsolve(constraint) match {
-            case Some(res) =>
-              val badBounds = res.map{case (p, (scope, lower, upper)) =>
-                p-> (!isSubtypeOf(scope, lower, upper)
-                  || (solveSetVariance(p) == Invariant
-                    && !isSubtypeOf(scope, upper, lower)))
-              }
-              if (badBounds.exists{_._2}) {
-                //pprint.pprintln((res, badBounds), height=4000000)
-                NoSolution
-              } else {
-                val mapping = res.map{case (proj, (scope, lower, upper)) =>
-                  val typ = solveSetVariance(proj) match {
-                    case Covariant        => lower
-                    case Contravariant    => upper
-                    case ConstantVariance => lower
-                    case Invariant        => lower
-                  }
-                  proj -> typ
-                }
-                Solution(applyConstraintSolution(pattern, mapping))
-              }
-            case None => NoSolution
-          }
-      }
-
-      def solve2(ors: Stream[Constraint]): SolveResult = {
-        ors.flatMap{subsolve(_)}.map{defaults ++ _}.map{res =>
-          if (res.keys != defaults.keys) ???
-          val badBounds = res.map{case (p, (scope, lower, upper)) =>
-            p-> (!isSubtypeOf(scope, lower, upper)
-              || (solveSetVariance(p) == Invariant
-                && !isSubtypeOf(scope, upper, lower)))
-          }
-          if (badBounds.exists{_._2}) {
-            //pprint.pprintln((res, badBounds), height=4000000)
-            NoSolution
-          } else {
-            val mapping = res.map{case (proj, (scope, lower, upper)) =>
-              val typ = solveSetVariance(proj) match {
-                case Covariant        => lower
-                case Contravariant    => upper
-                case ConstantVariance => lower
-                case Invariant        => lower
-              }
-              proj -> typ
-            }
-            Solution(applyConstraintSolution(pattern, mapping))
-          }
-        }.fold(NoSolution){
-          case (Inconsistent, _) => Inconsistent
-          case (_, Inconsistent) => Inconsistent
-          case (NoSolution, rightRes) => rightRes
-          case (leftRes, NoSolution)  => leftRes
-          case (Solution(leftType), Solution(rightType)) =>
-            // TODO assert (leftSolution.keys == rightSolution.keys)
-            // TODO min solution? how? what if some left and some right are min? check [pierce00]...
-            // TODO depends on variance somehow?
-            // TODO what if difference variance on each side?
-            // TODO is this correct?
-
-            //pprint.pprintln((leftType, rightType))
-            //println(isSubtypeOf(topScope, leftType, rightType))
-            //println(isSubtypeOf(topScope, rightType, leftType))
-
-            // TODO maximize if top-variance is Contravariant? Write tests
-            // that can detect this...
-            if (isSubtypeOf(topScope, leftType, rightType))
-              Solution(leftType)
-            else if (isSubtypeOf(topScope, rightType, leftType))
-              Solution(rightType)
-            else
-              Inconsistent
+      dnfStream(constraint).map{defaults ++ _}.map{res =>
+        if (res.keys != defaults.keys) ???
+        val badBounds = res.map{case (p, (scope, lower, upper)) =>
+          p-> (!isSubtypeOf(scope, lower, upper)
+            || (solveSetVariance(p) == Invariant
+              && !isSubtypeOf(scope, upper, lower)))
         }
-      }
-
-      //solve2(dnfStream3(constraint){m => Stream(m)}(Map()).map{MultiAndConstraint(_)}) match {
-      //  case Solution(res) => Some(res)
-      //  case Inconsistent  => ???; None // TODO can this actually happen?
-      //  case NoSolution    => None
-      //}
-
-      solve2(dnfStream2(constraint).map{MultiAndConstraint(_)}) match {
+        if (badBounds.exists{_._2}) {
+          //pprint.pprintln((res, badBounds), height=4000000)
+          NoSolution
+        } else {
+          val mapping = res.map{case (proj, (scope, lower, upper)) =>
+            val typ = solveSetVariance(proj) match {
+              case Covariant        => lower
+              case Contravariant    => upper
+              case ConstantVariance => lower
+              case Invariant        => lower
+            }
+            proj -> typ
+          }
+          Solution(applyConstraintSolution(pattern, mapping))
+        }
+      }.fold[SolveResult](NoSolution){
+          orSolveResult(topScope, topVariance, _, _)
+          // TODO *WHY* did it work when we minimized contravariant? Will all
+          // OR-alternatives always give the same result when matching???
+//        case (Inconsistent, _) => Inconsistent
+//        case (_, Inconsistent) => Inconsistent
+//        case (NoSolution, rightRes) => rightRes
+//        case (leftRes, NoSolution)  => leftRes
+//        case (Solution(leftType), Solution(rightType)) =>
+//          // TODO assert (leftSolution.keys == rightSolution.keys)
+//          // TODO min solution? how? what if some left and some right are min? check [pierce00]...
+//          // TODO depends on variance somehow?
+//          // TODO what if difference variance on each side?
+//          // TODO is this correct?
+//
+//          //pprint.pprintln((leftType, rightType))
+//          //println(isSubtypeOf(topScope, leftType, rightType))
+//          //println(isSubtypeOf(topScope, rightType, leftType))
+//
+//          // TODO maximize if top-variance is Contravariant? Write tests
+//          // that can detect this...
+//          //if (isSubtypeOf(topScope, leftType, rightType))
+//          //  Solution(leftType)
+//          //else if (isSubtypeOf(topScope, rightType, leftType))
+//          //  Solution(rightType)
+//          //else
+//          //  Inconsistent
+      } match {
         case Solution(res) => Some(res)
         case Inconsistent  => ???; None // TODO can this actually happen?
         case NoSolution    => None
       }
-
-      //solve2(dnfStream(constraint).map{MultiAndConstraint(_)}) match {
-      //  case Solution(res) => Some(res)
-      //  case Inconsistent  => ???; None // TODO can this actually happen?
-      //  case NoSolution    => None
-      //}
-
-      //solve(dnf(constraint)) match {
-      //  case Solution(res) => Some(res)
-      //  case Inconsistent  => ???; None // TODO can this actually happen?
-      //  case NoSolution    => None
-      //}
-    }
-
-
-    object ConstraintStreamRingCont {
-      type Cont = (ConstraintMap => Stream[ConstraintMap])
-      //type T = (Cont => Cont)
-      type T = Cont => ConstraintMap => Stream[ConstraintMap]
-      def one: T = {cont => {m => cont(m)}}
-      def zero: T = {cont => {m => Stream()}}
-      def mul(a: T, b: T): T = {cont => a(b(cont))}
-      def add(a: T, b: T): T = {cont => {m => a(cont)(m) ++ b(cont)(m)}}
-    }
-
-    def dnfStream3(constraint: Constraint): ConstraintStreamRingCont.T = constraint match {
-      case OrConstraint(left, right)  => ConstraintStreamRingCont.add(dnfStream3(left), dnfStream3(right))
-      case AndConstraint(left, right) => ConstraintStreamRingCont.mul(dnfStream3(left), dnfStream3(right))
-      case TrueConstraint             => ConstraintStreamRingCont.one
-      case FalseConstraint            => ConstraintStreamRingCont.zero
-      case MultiAndConstraint(m)      => {cont => m2 => cont(mergeConstraints(m2, m))}
-    }
-
-    object ConstraintStreamRing {
-      type T = Stream[ConstraintMap]
-      val one: T = Stream(Map())
-      val zero: T = Stream()
-      def mul(a: T, b: T): T = for {
-        x <- a
-        y <- b
-        z <- Stream(mergeConstraintsOption(x, y)).flatten
-      } yield z
-      def add(a: T, b: T): T = a #::: b
-    }
-
-    def dnfStream2(constraint: Constraint): ConstraintStreamRing.T = constraint match {
-      case OrConstraint(left, right)  => ConstraintStreamRing.add(dnfStream2(left), dnfStream2(right))
-      case AndConstraint(left, right) => ConstraintStreamRing.mul(dnfStream2(left), dnfStream2(right))
-      case TrueConstraint             => ConstraintStreamRing.one
-      case FalseConstraint            => ConstraintStreamRing.zero
-      case MultiAndConstraint(m)      => Stream(m)//Stream(mergeConstraintsOption(m, Map())).flatten
     }
 
     def dnfStream(constraint: Constraint): Stream[ConstraintMap] = constraint match {
-      case OrConstraint(left, right)  => dnfStream(left) #::: dnfStream(right)
       case AndConstraint(left, right) =>
         for {
-          l <- dnfStream(left)
-          r <- dnfStream(right)
-        } yield mergeConstraints(l, r)
-      case TrueConstraint             => Stream(Map())
-      case FalseConstraint            => Stream()
-      case MultiAndConstraint(m)      => Stream(m)//Stream(mergeConstraintsOption(m, Map())).flatten
+          a <- dnfStream(left)
+          b <- dnfStream(right)
+          z <- mergeConstraintsOption(a, b).toStream
+        } yield z
+      case OrConstraint(left, right) => dnfStream(left) #::: dnfStream(right)
+      case TrueConstraint            => Stream(Map())
+      case FalseConstraint           => Stream()
+      case MultiAndConstraint(m)     => Stream(m)//Stream(mergeConstraintsOption(m, Map())).flatten
     }
 
     def dnf(constraint: Constraint): Constraint = constraint match {
@@ -793,18 +703,7 @@ object Dol {
       case (_, TrueConstraint)  => left
       case (FalseConstraint, _) => FalseConstraint
       case (_, FalseConstraint) => FalseConstraint
-      //case (MultiAndConstraint(m1), MultiAndConstraint(m2)) => MultiAndConstraint(mergeConstraints(m1, m2))
-      //case (OrConstraint(leftDnf, rightDnf), other) =>
-      //  //pprint.pprintln(((leftDnf, rightDnf), other), height=400000)
-      //  orConstraint(
-      //    andConstraint(leftDnf, other),
-      //    andConstraint(rightDnf, other))
-      //case (other, OrConstraint(leftDnf, rightDnf)) =>
-      //  //pprint.pprintln((other, (leftDnf, rightDnf)), height=400000)
-      //  orConstraint(
-      //    andConstraint(other, leftDnf),
-      //    andConstraint(other, rightDnf))
-      //case _ => ???
+      //case (MultiAndConstraint(m1), MultiAndConstraint(m2)) => MultiAndConstraint(mergeConstraints(m1, m2)) // TODO incorrect?
       case _ => AndConstraint(left, right)
     }
 
@@ -892,13 +791,9 @@ object Dol {
     def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): TypedTerm = (term, prototype) match {
       case (Var(x), p) =>
         term.withType{
-          scope.get(x) match {
-            case Some(xType) =>
-              raise(scope, su.newSymbol(), xType, p) match {
-                case Some(res) => res
-                case None => ???; ErrorType
-              }
-            case None => ???; ErrorType // TODO
+          varRaise(scope, su.newSymbol(), x, p) match {
+            case Some(res) => res
+            case None => ???; ErrorType
           }
         }
       case (Let(x, xTerm, resTerm), p) =>
@@ -919,14 +814,15 @@ object Dol {
       case (App(x, y), p) =>
         val z = su.newSymbol()
         term.withType{
-          typecheckTerm(su, Var(x), FunType(z, Que, Que), scope).assignedType match {
+          typecheckTerm(su, Var(x), FunType(z, Que, p), scope).assignedType match {
             case FunType(w, zType, zResType) if w == z =>
               if (scope.contains(z)) ??? // TODO rename
               val yType = typecheckTerm(su, Var(y), zType, scope).assignedType
-              raise(scope, su.newSymbol(), typeRenameVar(z, y, zResType), p) match {
-                case Some(res) => res
-                case None => ???; ErrorType
-              }
+              typeRenameVar(z, y, zResType)
+              //raise(scope, su.newSymbol(), None, typeRenameVar(z, y, zResType), p) match {
+              //  case Some(res) => res
+              //  case None => ???; ErrorType
+              //}
             case _ =>
               ???; ErrorType // TODO
           }
@@ -943,7 +839,7 @@ object Dol {
         // TODO Is it fine to do lower/raise of arg and res separately? Or is
         // it necessary to do one call to raise at the end using the whole
         // prototype?
-        lower(scope, su.newSymbol(), xType, argPrototype) match {
+        varLower(scope + (x -> xType), su.newSymbol(), x, argPrototype) match {
           case None =>
             term.withType(error())
           case Some(loweredXType) =>
@@ -962,7 +858,7 @@ object Dol {
             val typ = AndType(typedLeft.assignedType, typedRight.assignedType)
             AndDef(typedLeft, typedRight).withType(typ)
           case FieldDef(a, aTerm) =>
-            val aPrototype = raise(scope, su.newSymbol(), xType, FieldDecl(a, Que)) match {
+            val aPrototype = raise(scope, su.newSymbol(), None, xType, FieldDecl(a, Que)) match {
               case Some(FieldDecl(b, bPrototype)) if a == b => bPrototype
               case None => Que
               case _ => error()
@@ -971,12 +867,12 @@ object Dol {
             FieldDef(a, aTypedTerm).withType(FieldDecl(a, aTypedTerm.assignedType))
           case TypeDef(a, aType) =>
             val typ = TypeDecl(a, aType, aType)
-            val declPrototype = raise(scope, su.newSymbol(), xType, TypeDecl(a, Que, Que)) match {
+            val declPrototype = raise(scope, su.newSymbol(), None, xType, TypeDecl(a, Que, Que)) match {
               case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
               case None => TypeDecl(a, Que, Que)
               case _ => error()
             }
-            val myType = raise(scope, su.newSymbol(), TypeDecl(a, aType, aType), declPrototype) match {
+            val myType = raise(scope, su.newSymbol(), None, TypeDecl(a, aType, aType), declPrototype) match {
               case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
               case _ => error()
             }
@@ -992,7 +888,7 @@ object Dol {
           if (!varIsSubtypeOf(scope + (x -> typedDefs.assignedType), x, xType)) {
             term.withType(error())
           } else {
-            val raisedType = raise(scope + (x -> xType), su.newSymbol(), xType, p).getOrElse{error()}
+            val raisedType = varRaise(scope + (x -> xType), su.newSymbol(), x, p).getOrElse{error()}
             Obj(x, xType, typedDefs).withType(raisedType)
           }
         }
@@ -1017,7 +913,7 @@ object Dol {
           typeRenameVar(fromVar, toVar, aLowerType),
           typeRenameVar(fromVar, toVar, aUpperType))
       case AndType(left, right) =>
-        andType(
+        AndType( // Instead of andType(), to make it exactly equal if fromVar == toVar.
           typeRenameVar(fromVar, toVar, left),
           typeRenameVar(fromVar, toVar, right))
       case _ =>
@@ -1260,24 +1156,27 @@ object Dol {
       }
     }
 
-    def gatherVariance2(r: Symbol, typ: Type, variance: Variance): Map[TypeProj, Variance] = typ match {
+    def gatherVariance(r: Symbol, typ: Type, variance: Variance): Map[TypeProj, Variance] = typ match {
       case FunType(x, xType, xResType) =>
-        mapUnion(gatherVariance2(r, xType, reverseVariance(variance)),
-                 gatherVariance2(r,xResType, variance)){mergeVariance(_, _)}
+        mapUnion(gatherVariance(r, xType, reverseVariance(variance)),
+                 gatherVariance(r,xResType, variance)){mergeVariance(_, _)}
       case AndType(left, right) =>
-        mapUnion(gatherVariance2(r, left, variance),
-                 gatherVariance2(r, right, variance)){mergeVariance(_, _)}
+        mapUnion(gatherVariance(r, left, variance),
+                 gatherVariance(r, right, variance)){mergeVariance(_, _)}
       case TypeDecl(a, aLowerType, aUpperType) =>
-        mapUnion(gatherVariance2(r, aLowerType, reverseVariance(variance)),
-                 gatherVariance2(r, aUpperType, variance)){mergeVariance(_, _)}
+        mapUnion(gatherVariance(r, aLowerType, reverseVariance(variance)),
+                 gatherVariance(r, aUpperType, variance)){mergeVariance(_, _)}
       case FieldDecl(a, aType) =>
-        gatherVariance2(r, aType, variance)
+        gatherVariance(r, aType, variance)
       case proj @ TypeProj(x, _) if x == r =>
         Map(proj -> variance)
       case _ => Map()
     }
 
-    def gatherConstraints(scope: Scope, solveSet: Set[TypeProj], from: Type, to: Type, variance: Variance, visitedLeft: Set[TypeProj] = Set(), visitedRight: Set[TypeProj] = Set()): Constraint = {
+    def gatherConstraints(scope: Scope, solveSet: Set[TypeProj], zOption: Option[Symbol], from: Type, to: Type, visitedLeft: Set[TypeProj] = Set(), visitedRight: Set[TypeProj] = Set()): Constraint = {
+
+      def rec(scope: Scope = scope, from: Type = from, zOption: Option[Symbol] = zOption, to: Type = to, visitedLeft: Set[TypeProj] = visitedLeft, visitedRight: Set[TypeProj] = visitedRight) = gatherConstraints(scope, solveSet, zOption, from, to, visitedLeft, visitedRight)
+
       def largest(typ: Type) = {
         typeTransform(typ, Covariant) {
           case (proj: TypeProj, Covariant) if solveSet(proj)     => Some(Top)
@@ -1298,18 +1197,30 @@ object Dol {
 
       // TODO replace variance in rec by Contravariant="widen" and Covariante="tighten"?
 
-      def rec(scope: Scope = scope, from: Type = from, to: Type = to, visitedLeft: Set[TypeProj] = visitedLeft, visitedRight: Set[TypeProj] = visitedRight, variance: Variance = variance) = gatherConstraints(scope, solveSet, from, to, variance, visitedLeft, visitedRight)
-
       (from, to) match {
-        case (Bot, RecType(y, yType)) if (!isPrototype(yType)) => TrueConstraint // TODO hack
-        case (RecType(x, xType), Top) if (!isPrototype(xType)) => TrueConstraint // TODO hack
+        // TODO (_, Top)?
+        case (RecType(x, xType), Top) => TrueConstraint // TODO hack
+        case (Bot, RecType(y, yType)) => TrueConstraint // TODO hack
+
+        case (RecType(x, xType), _) if (zOption != None) =>
+          rec(from=typeRenameVar(x, zOption.get, xType))
+        case (_, RecType(y, yType)) if (zOption != None) =>
+          rec(to=typeRenameVar(y, zOption.get, yType))
+
         case (RecType(x, xType), RecType(y, yType)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
         case (RecType(x, xType), RecType(y, yType)) if x == y =>
-          rec(scope = scope+(x -> xType), from=xType, to=yType, variance=variance) // TODO vs RigidVariance?
+          rec(scope = scope+(x -> xType), from=xType, to=yType) // TODO vs RigidVariance?
+
+
 
         case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
         case (Bot, FieldDecl(a, aType)) => rec(from=FieldDecl(a, Bot))
+
+
+
+        case (TypeDecl(a, aLowerType, aUpperType), Top) =>
+          rec(to=TypeDecl(a, Bot, Top))
 
         case (Bot, TypeDecl(a, aLowerType, aUpperType)) => // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
           //rec(from=TypeDecl(a, Top, Bot)) // TODO Probably works assuming aLowerType <: aUpperType, or exactly one of them is a prototype!?!?
@@ -1326,31 +1237,32 @@ object Dol {
             case proj: TypeProj if solveSet(proj) => Set(proj)
             case _ => Set()
           }
-          if (lowerSolveSet.isEmpty)
+          if (lowerSolveSet.isEmpty && upperSolveSet.isEmpty) // TODO evil hack.-
+            TrueConstraint
+          else if (lowerSolveSet.isEmpty) {
             andConstraint(
-              rec(from=aLowerType, to=aUpperType, variance=variance),
+              rec(from=aLowerType, to=aUpperType, zOption=None), // TODO this messes with visitedSets...
               andConstraint(
-                rec(from=Bot, to=aLowerType, variance=reverseVariance(variance)),
-                rec(from=aUpperType, to=Top, variance=variance)))
+                rec(from=Bot, to=aLowerType, zOption=None),
+                rec(from=aUpperType, to=Top, zOption=None)))
+          }
           else if (upperSolveSet.isEmpty)
             andConstraint(
-              rec(from=aLowerType, to=aUpperType, variance=reverseVariance(variance)),
+              rec(from=aLowerType, to=aUpperType, zOption=None),
               andConstraint(
-                rec(from=Bot, to=aLowerType, variance=reverseVariance(variance)),
-                rec(from=aUpperType, to=Top, variance=variance)))
+                rec(from=Bot, to=aLowerType, zOption=None),
+                rec(from=aUpperType, to=Top, zOption=None)))
           else // TODO just FalseConstraint?
-            andConstraint(
-              rec(from=aLowerType, to=aUpperType, variance=Invariant), // TODO
-              andConstraint(
-                rec(from=Bot, to=aLowerType, variance=reverseVariance(variance)),
-                rec(from=aUpperType, to=Top, variance=variance)))
+            FalseConstraint
+            //andConstraint(
+            //  rec(from=aLowerType, to=aUpperType, variance=Invariant, zOption=None), // TODO
+            //  andConstraint(
+            //    rec(from=Bot, to=aLowerType, variance=reverseVariance(variance), zOption=None),
+            //    rec(from=aUpperType, to=Top, variance=variance, zOption=None)))
 
-        case (TypeDecl(a, aLowerType, aUpperType), Top) =>
-          rec(to=TypeDecl(a, Bot, Top))
 
         case (FunType(x, _, _), Top) => rec(to=FunType(x, Bot, Top))
         case (Bot, FunType(x, _, _)) => rec(from=FunType(x, Top, Bot))
-
 
         case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
@@ -1359,8 +1271,8 @@ object Dol {
           // TODO is it fine to just add yType to scope here? Do we need to
           // remove and solveSet-projs from it?
           andConstraint(
-            rec(from=yType, to=xType, variance=reverseVariance(variance)),
-            rec(scope = scope+(x -> yType), from=xResType, to=yResType))
+            rec(from=yType, to=xType, zOption=None),
+            rec(scope = scope+(x -> yType), from=xResType, to=yResType, zOption=None))
 
         case (_, AndType(left, right)) =>
           andConstraint(rec(to=left), rec(to=right))
@@ -1375,7 +1287,7 @@ object Dol {
           } else if (!solveSet(aProj) && solveSet(bProj)) {
             MultiAndConstraint(Map(bProj -> (scope, from, Top)))
           } else { // if (!solveSet(aProj) && !solveSet(bProj))
-            val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+            val aUpperType = if (visitedLeft(aProj))  Top else typeProjectUpper(scope, x, a).getOrElse{error()}
             val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
 
             orConstraint(
@@ -1390,6 +1302,16 @@ object Dol {
         case (_, bProj @ TypeProj(y, b)) if solveSet(bProj) =>
           val aUpperType = largest(from) // TODO get rid of all type-projections?
           MultiAndConstraint(Map(bProj -> (scope, aUpperType, Top)))
+
+        case (AndType(left, right), bProj @ TypeProj(y, b)) if !solveSet(bProj) =>  // TODO similar for the (_, AndType)-case above?
+          val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+          orConstraint(
+            rec(to=bLowerType, visitedRight = visitedRight+bProj),
+            orConstraint(
+              rec(from=left),
+              rec(from=right)
+            )
+          )
 
         case (AndType(left, right), _) =>
           // TODO factor duplicate declarations first? i.e. AndType(FieldDef(a,A), FieldDef(a,B)) --> FieldDef(a, AndType(A,B)).
@@ -1407,15 +1329,16 @@ object Dol {
 
         case (_, bProj @ TypeProj(y, b)) if !solveSet(bProj) =>
           val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+          // TODO eliminateRecursiveTypes?
           rec(to=bLowerType, visitedRight = visitedRight+bProj)
 
         case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
-          rec(from=aType, to=bType)
+          rec(from=aType, to=bType, zOption=None)
 
         case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
           andConstraint(
-            rec(from=bLowerType, to=aLowerType, variance=reverseVariance(variance)),
-            rec(from=aUpperType, to=bUpperType))
+            rec(from=bLowerType, to=aLowerType, zOption=None),
+            rec(from=aUpperType, to=bUpperType, zOption=None))
 
         case (Top, Top) => TrueConstraint
         case (Bot, Top) => TrueConstraint
@@ -1504,108 +1427,118 @@ object Dol {
     /** Least supertype R of `lowerType` such that R matches `upperPrototype`.
      * Return None if R does not exists.
      */
-    def raise(scope: Scope, r: Symbol, lowerType: Type, upperPrototype: Prototype): Option[Type] = {
+    def raise(scope: Scope, r: Symbol, zOption: Option[Symbol], lowerType: Type, upperPrototype: Prototype): Option[Type] = {
       val (numQues, labeledPrototype) = prepMatch(scope, r, simplify(upperPrototype))
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
-      val solveSetVariance = gatherVariance2(r, labeledPrototype, Covariant)
-      val constraint = gatherConstraints(scope, solveSet, lowerType, labeledPrototype, Covariant)
+      val solveSetVariance = gatherVariance(r, labeledPrototype, Covariant)
+      val constraint = gatherConstraints(scope, solveSet, zOption, lowerType, labeledPrototype)
       solveConstraint(scope, solveSet, solveSetVariance, constraint, labeledPrototype, Covariant)
     }
 
     /** Greatest subtype L of `upperType` such that L matches `lowerPrototype`.
      * Return None if L does not exists.
      */
-    def lower(scope: Scope, r: Symbol, lowerPrototype: Prototype, upperType: Type): Option[Type] = {
+    def lower(scope: Scope, r: Symbol, zOption: Option[Symbol], lowerPrototype: Prototype, upperType: Type): Option[Type] = {
       val (numQues, labeledPrototype) = prepMatch(scope, r, simplify(lowerPrototype))
-      val solveSetVariance = gatherVariance2(r, labeledPrototype, Contravariant)
+      val solveSetVariance = gatherVariance(r, labeledPrototype, Contravariant)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
-      val constraint = gatherConstraints(scope, solveSet, labeledPrototype, upperType, Contravariant)
+      val constraint = gatherConstraints(scope, solveSet, zOption, labeledPrototype, upperType)
       solveConstraint(scope, solveSet, solveSetVariance, constraint, labeledPrototype, Contravariant)
     }
 
     /** Like raise(scope(z), prototype), but does eliminateRecursiveTypes(_, z) first.
      */
     def varRaise(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = {
-      raise(scope, r, eliminateRecursiveTypes(scope(z), z), eliminateRecursiveTypes(prototype, z))
+      raise(scope, r, Some(z), eliminateRecursiveTypes(scope(z), z), eliminateRecursiveTypes(prototype, z))
     }
 
     /** Like lower(prototype, scope(z)), but does eliminateRecursiveTypes(_, z) first.
      */
     def varLower(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = {
-      lower(scope, r, eliminateRecursiveTypes(prototype, z), eliminateRecursiveTypes(scope(z), z))
+      lower(scope, r, Some(z), eliminateRecursiveTypes(prototype, z), eliminateRecursiveTypes(scope(z), z))
     }
 
     /** Check if first <: second. RecTypes need to be rigidEquals.
      */
     def isSubtypeOf(scope: Scope, first: Type, second: Type, visitedLeft: Set[TypeProj] = Set(), visitedRight: Set[TypeProj] = Set()): Boolean = {
-        // TODO Confirm whether r is efficient. I expect r to get inlined.
-        def r(scope: Scope = scope, first: Type = first, second: Type = second, visitedLeft: Set[TypeProj] = visitedLeft, visitedRight: Set[TypeProj] =
-          visitedRight) = isSubtypeOf(scope, first, second, visitedLeft, visitedRight)
-        (first, second) match {
-          case (Bot, _) => true
-          case (_, Top) => true
-          case (_, AndType(left, right)) => r(second=left) && r(second=right) // IMPORTANT: This must be checked before the other AndType-case.
-          case (AndType(left, right), _) => r(first=left) || r(first=right)
-          case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b => r(first=aType, second=bType)
-
-          case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLower, bUpper)) if a == b =>
-           r(first=bLower, second=aLowerType) && r(first=aUpperType, second=bUpper)
-
-          case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) =>
-            aProj == bProj || {
-              val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()} // TODO pass along visitedLeft to typeProjectUpper
-              // TODO eliminate rectypes!
-              r(first=aUpperType, visitedLeft=visitedLeft+aProj)
-            } || {
-              val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()} // TODO pass along visitedRight to typeProjectUpper
-              // TODO eliminate rectypes!
-              r(second=bLowerType, visitedRight=visitedRight+bProj)
-            }
-
-          case (aProj @ TypeProj(x, a), _) =>
-            val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
-            r(first=aUpperType, visitedLeft = visitedLeft+aProj)
-          case (_, bProj @ TypeProj(y, b)) =>
-            val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
-            r(second=bLowerType, visitedRight = visitedRight+bProj)
-
-          case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
-            if (scope.contains(x)) ??? // TODO Maybe better to create new var "w", and rename {x,y}->w?
-            // TODO is isVarFreeInType(x, second)-check necessary?
-            (!isVarFreeInType(x, second)
-              && r(second=typeRenameBoundVarAssumingNonFree(x, second)))
-
-          case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
-            (r(first=yType, second=xType)
-              && r(scope = scope+(x -> yType), first=xResType, second=yResType))
-          case (_: RecType, _) | (_, _: RecType) =>
-            rigidEqualTypes(first, second)
-          case _ => false
-        }
+      raise(scope, -1, None, first, second) != None
+//        // TODO Confirm whether r is efficient. I expect r to get inlined.
+//        def r(scope: Scope = scope, first: Type = first, second: Type = second, visitedLeft: Set[TypeProj] = visitedLeft, visitedRight: Set[TypeProj] =
+//          visitedRight) = isSubtypeOf(scope, first, second, visitedLeft, visitedRight)
+//        (first, second) match {
+//          case (Bot, _) => true
+//          case (_, Top) => true
+//
+//          case (AndType(left, right), bProj @ TypeProj(y, b)) =>
+//            val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+//            (r(first=left)
+//              || r(first=right)
+//              || r(second=bLowerType, visitedRight = visitedRight+bProj))
+//
+//          case (_, AndType(left, right)) => r(second=left) && r(second=right) // IMPORTANT: This must be checked before the other AndType-case.
+//          case (AndType(left, right), _) => r(first=left) || r(first=right)
+//
+//          case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b => r(first=aType, second=bType)
+//
+//          case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLower, bUpper)) if a == b =>
+//           r(first=bLower, second=aLowerType) && r(first=aUpperType, second=bUpper)
+//
+//          case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) =>
+//            aProj == bProj || {
+//              val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()} // TODO pass along visitedLeft to typeProjectUpper
+//              // TODO eliminate rectypes!
+//              r(first=aUpperType, visitedLeft=visitedLeft+aProj)
+//            } || {
+//              val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()} // TODO pass along visitedRight to typeProjectUpper
+//              // TODO eliminate rectypes!
+//              r(second=bLowerType, visitedRight=visitedRight+bProj)
+//            }
+//
+//          case (aProj @ TypeProj(x, a), _) =>
+//            val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
+//            r(first=aUpperType, visitedLeft = visitedLeft+aProj)
+//          case (_, bProj @ TypeProj(y, b)) =>
+//            val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
+//            r(second=bLowerType, visitedRight = visitedRight+bProj)
+//
+//          case (FunType(x, xType, _), FunType(y, _, _)) if x != y =>
+//            // TODO Maybe better to create new var "w", and rename {x,y}->w?
+//            if (scope.contains(x) && !(isSubtypeOf(scope, scope(x), xType))) {
+//              pprint.pprintln((xType, scope(x)))
+//              ??? 
+//            }
+//            // TODO is isVarFreeInType(x, second)-check necessary?
+//            (!isVarFreeInType(x, second)
+//              && r(second=typeRenameBoundVarAssumingNonFree(x, second)))
+//
+//          case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
+//            (r(first=yType, second=xType)
+//              && r(scope = scope+(x -> yType), first=xResType, second=yResType))
+//          case (_: RecType, _) | (_, _: RecType) =>
+//            rigidEqualTypes(first, second)
+//          case _ => false
+//        }
       }
 
     /** Check if scope(x) <: subtype.
      *  Formally, x: xType, xType <: To.
      */
     def varIsSubtypeOf(scope: Scope, z: Symbol, supertype: Type): Boolean = {
-      // TODO maybe factor inner out into separate function?
-      val zType = eliminateRecursiveTypes(scope(z), z)
-      val zSupertype = eliminateRecursiveTypes(supertype, z)
-      isSubtypeOf(scope, zType, zSupertype)
-    }
+      //val zType = eliminateRecursiveTypes(scope(z), z)
+      //val zSupertype = eliminateRecursiveTypes(supertype, z)
+      //isSubtypeOf(scope, zType, zSupertype)
+      // TODO need to unwrap rectypes when we upcast rectype!
 
-    def equalTypes(scope: Scope, first: Type, second: Type): Boolean = {
-      (isSubtypeOf(scope, first, second)
-        && isSubtypeOf(scope, second, first))
+      varRaise(scope, -1, z, supertype) != None
     }
 
     /** Check if types are equal by subtyping.
      * Formally, first <: second AND second <: first.
      */
     def varEqualTypes(scope: Scope, z: Symbol, second: Type): Boolean = {
-      val zType = scope(z)
+      val first = scope(z)
       (varIsSubtypeOf(scope, z, second)
-        && varIsSubtypeOf(scope + (z -> second), z, zType))
+        && varIsSubtypeOf(scope + (z -> second), z, first))
     }
 
 

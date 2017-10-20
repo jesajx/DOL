@@ -63,16 +63,6 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   // TODO property("NoFuture.equalTypesOLD -- negative")
 
-  property("NoFuture.equalTypesOLD -- positive") = {
-    val generator: Gen[(SymbolUniverse, Scope, Type, Type)] = for {
-      ctx <- genGlobalScope()
-      (ctx2, typ) <- genType(ctx, Map())
-    } yield (new SymbolUniverse(ctx2.nextSymbol), ctx2.globalScope, typ, typ)
-    Prop.forAllNoShrink(generator){prettyProp{ case (su, scope, x, upper) =>
-      NoFuture.equalTypesOLD(su, scope, x, upper)
-    }}
-  }
-
   property("NoFuture.varEqualTypes -- positive") = {
     val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx1 <- genGlobalScope()
@@ -90,15 +80,28 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   // TODO also generate strict subtypes? i.e. T <: U s.t. !(U <: T)
 
-  property("NoFuture.varIsSubtypeOf -- positive") = {
-    val generator: Gen[(Scope, Symbol, Type)] = for {
+  property("NoFuture.varIsSubtypeOf -- a <: b ==> varIsSubtypeOf(a, b)") = {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx <- genGlobalScope()
       (ctx2, x) <- ctx.newSymbol()
-      (ctx3, lower) <- genType(ctx2, Map())
-      (ctx4, upper) <- genSupertype(ctx3, Map(), lower)
-    } yield (ctx4.globalScope + (x -> lower), x, upper)
-    Prop.forAllNoShrink(generator){prettyProp{ case (scope, x, upper) =>
-      NoFuture.varIsSubtypeOf(scope, x, upper)
+      (ctx3, b) <- genType(ctx2, Map())
+      (ctx4, a) <- genSubtype(ctx3, Map(), b)
+    } yield (ctx4, x, a, b)
+    Prop.forAllNoShrink(generator){prettyProp{ case (ctx, x, a, b) =>
+      NoFuture.varIsSubtypeOf(ctx.globalScope + (x -> a), x, b)
+    }}
+  }
+
+  property("NoFuture.varIsSubtypeOf -- transitivity -- a <: b <: c ==> varIsSubtypeOf(a, c)") = {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type, Type)] = for {
+      ctx <- genGlobalScope()
+      (ctx2, x) <- ctx.newSymbol()
+      (ctx3, c) <- genType(ctx2, Map())
+      (ctx4, b) <- genSubtype(ctx3, Map(), c)
+      (ctx5, a) <- genSubtype(ctx4, Map(), b)
+    } yield (ctx5, x, a, b, c)
+    Prop.forAllNoShrink(generator){prettyProp{ case (ctx, x, a, b, c) =>
+      NoFuture.varIsSubtypeOf(ctx.globalScope + (x -> a), x, c)
     }}
   }
 
@@ -141,108 +144,119 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       val freeMiddle = NoFuture.allFreeVarsInType(res)
       val freeAfter  = NoFuture.allFreeVarsInType(res2)
 
-      Prop.all(
-        !(x != y && freeBefore(x))                   || (!freeMiddle(x) && freeMiddle(y)),
-        !(x != y && freeMiddle(y))                   || (!freeAfter(y) && freeAfter(x)),
-        !(x != y && freeBefore(x) && !freeBefore(y)) || (typ == res2),
-        !(x == y)                                    || (typ == res && res == res2)
+      (prettyNamed("res", res)
+        |: prettyNamed("res2", res2)
+        |: prettyNamed("freeBefore", freeBefore)
+        |: prettyNamed("freeMiddle", freeMiddle)
+        |: prettyNamed("freeAfter", freeAfter)
+        |: Prop.all(
+          !(x != y && freeBefore(x))                   || (!freeMiddle(x) && freeMiddle(y)),
+          !(x != y && freeMiddle(y))                   || (!freeAfter(y) && freeAfter(x)),
+          !(x != y && freeBefore(x) && !freeBefore(y)) || (typ == res2),
+          !(x == y)                                    || (typ == res && res == res2)
+        )
       )
     }
   }}
 
 
   property("NoFuture.typeProjectUpper -- single") = {
-    val generator: Gen[(SymbolUniverse, Scope, Symbol, Symbol, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Symbol, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, x) <- ctx.newSymbol()
-      (ctx3, a) <- ctx2.newSymbol()
-      (ctx4, aUpperType) <- genType(ctx3, Map())
-      (ctx5, aLowerType) <- genSubtype(ctx4, Map(), aUpperType)
-      ctx6 <- ctx5.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
-      su <- ctx6.toSymbolUniverse()
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, x) <- ctx2.newSymbol()
+      (ctx4, a) <- ctx3.newSymbol()
+      (ctx5, aUpperType) <- genType(ctx4, Map())
+      (ctx6, aLowerType) <- genSubtype(ctx5, Map(), aUpperType)
+      ctx7 <- ctx6.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
       // TODO test multiple TypeDecls
       // TODO test inbetween typeprojs
       // TODO test rectypes
-    } yield (su, ctx6.globalScope, x, a, aUpperType)
+    } yield (ctx7, z, x, a, aUpperType)
     // TODO test multiple declarations (should result in AndType)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, x, a, aUpperType) =>
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, x, a, aUpperType) =>
+      val scope = ctx.globalScope
       val res = NoFuture.typeProjectUpper(scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypesOLD(su, scope, res.get, aUpperType))
+      s"res = $res" |: Prop.all(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, aUpperType))
     }}
   }
 
   property("NoFuture.typeProjectLower -- single") = {
-    val generator: Gen[(SymbolUniverse, Scope, Symbol, Symbol, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Symbol, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, x) <- ctx.newSymbol()
-      (ctx3, a) <- ctx2.newSymbol()
-      (ctx4, aUpperType) <- genType(ctx3, Map())
-      (ctx5, aLowerType) <- genSubtype(ctx4, Map(), aUpperType)
-      ctx6 <- ctx5.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
-      su <- ctx6.toSymbolUniverse()
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, x) <- ctx2.newSymbol()
+      (ctx4, a) <- ctx3.newSymbol()
+      (ctx5, aUpperType) <- genType(ctx4, Map())
+      (ctx6, aLowerType) <- genSubtype(ctx5, Map(), aUpperType)
+      ctx7 <- ctx6.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
       // TODO test multiple TypeDecls
       // TODO test inbetween typeprojs
       // TODO test rectypes
-    } yield (su, ctx6.globalScope, x, a, aLowerType)
+    } yield (ctx7, z, x, a, aLowerType)
     // TODO test multiple declarations (should result in AndType)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, x, a, aUpperType) =>
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, x, a, aUpperType) =>
+      val scope = ctx.globalScope
       val res = NoFuture.typeProjectLower(scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.equalTypesOLD(su, scope, res.get, aUpperType))
+      s"res = $res" |: Prop.all(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, aUpperType))
     }}
   }
 
 
   property("NoFuture.typeProjectUpper -- multi") = {
-    val generator: Gen[(SymbolUniverse, Scope, Symbol, Symbol, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Symbol, Symbol, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, x) <- ctx.newSymbol()
-      (ctx3, a) <- ctx2.newSymbol()
-      (ctx4, aUpperType1) <- genType(ctx3, Map())
-      (ctx5, aLowerType1) <- genSubtype(ctx4, Map(), aUpperType1)
-      (ctx6, aUpperType2) <- genType(ctx5, Map())
-      (ctx7, aLowerType2) <- genSubtype(ctx6, Map(), aUpperType2)
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, x) <- ctx2.newSymbol()
+      (ctx4, a) <- ctx3.newSymbol()
+      (ctx5, aUpperType1) <- genType(ctx4, Map())
+      (ctx6, aLowerType1) <- genSubtype(ctx5, Map(), aUpperType1)
+      (ctx7, aUpperType2) <- genType(ctx6, Map())
+      (ctx8, aLowerType2) <- genSubtype(ctx7, Map(), aUpperType2)
 
       decl1 <- const(TypeDecl(a, aLowerType1, aUpperType1))
       decl2 <- const(TypeDecl(a, aLowerType2, aUpperType2))
-      ctx8 <- ctx7.withBinding(x -> AndType(decl1, decl2))
-      su <- ctx8.toSymbolUniverse()
+      ctx9 <- ctx8.withBinding(x -> AndType(decl1, decl2))
       // TODO test multiple TypeDecls
       // TODO test inbetween typeprojs
       // TODO test rectypes
-    } yield (su, ctx8.globalScope, x, a, AndType(aUpperType1, aUpperType2))
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, x, a, aUpperType) =>
+    } yield (ctx9, z, x, a, AndType(aUpperType1, aUpperType2))
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, x, a, aUpperType) =>
+      val scope = ctx.globalScope
       val res = NoFuture.typeProjectUpper(scope, x, a)
       val resLabel = prettyNamed("res", res)
-      resLabel |: Prop.all(res != None && NoFuture.equalTypesOLD(su, scope, res.get, aUpperType))
+      resLabel |: Prop.all(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, aUpperType))
     }}
   }
 
   property("NoFuture.leastCommonSupertype -- commutative") = {
-    val generator: Gen[(SymbolUniverse, Scope, Type, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, a) <- genType(ctx, Map())
-      (ctx3, b) <- genType(ctx2, Map())
-      su <- ctx3.toSymbolUniverse()
-    } yield (su, ctx3.globalScope, a, b)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, a, b) =>
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, a) <- genType(ctx2, Map())
+      (ctx4, b) <- genType(ctx3, Map())
+    } yield (ctx4, z, a, b)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, a, b) =>
+      val scope = ctx.globalScope
       def lub(left: Type, right: Type) = NoFuture.leastCommonSupertype(scope, left, right)
       val lub_ab = lub(a, b)
       val lub_ba = lub(b, a)
       (prettyNamed("lub(a, b)", lub_ab)
         |: prettyNamed("lub(b, a)", lub_ba)
-        |: Prop.all(NoFuture.equalTypesOLD(su, scope, lub_ab, lub_ba)))
+        |: Prop.all(NoFuture.varEqualTypes(scope + (z -> lub_ab), z, lub_ba)))
     }}
   }
 
   property("NoFuture.leastCommonSupertype -- associative") = {
-    val generator: Gen[(SymbolUniverse, Scope, Type, Type, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, a) <- genType(ctx, Map())
-      (ctx3, b) <- genType(ctx2, Map())
-      (ctx4, c) <- genType(ctx3, Map())
-      su <- ctx4.toSymbolUniverse()
-    } yield (su, ctx4.globalScope, a, b, c)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, a, b, c) =>
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, a) <- genType(ctx2, Map())
+      (ctx4, b) <- genType(ctx3, Map())
+      (ctx5, c) <- genType(ctx4, Map())
+    } yield (ctx5, z, a, b, c)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, a, b, c) =>
+      val scope = ctx.globalScope
       def lub(left: Type, right: Type) = NoFuture.leastCommonSupertype(scope, left, right)
       val bc   = lub(b, c)
       val a_bc = lub(a, bc)
@@ -253,18 +267,19 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
         |: prettyNamed("lub(a, lub(b, c))", a_bc)
         |: prettyNamed("lub(a, b)", ab)
         |: prettyNamed("lub(lub(a, b), c)", ab_c)
-        |: Prop.all(NoFuture.equalTypesOLD(su, scope, a_bc, ab_c)))
+        |: Prop.all(NoFuture.varEqualTypes(scope + (z -> a_bc), z, ab_c)))
     }}
   }
 
   property("NoFuture.{leastCommonSupertype, greatestCommonSubtype} -- absorbation") = {
-    val generator: Gen[(SymbolUniverse, Scope, Type, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, a) <- genType(ctx, Map())
-      (ctx3, b) <- genType(ctx2, Map())
-      su <- ctx3.toSymbolUniverse()
-    } yield (su, ctx3.globalScope, a, b)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, a, b) =>
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, a) <- genType(ctx2, Map())
+      (ctx4, b) <- genType(ctx3, Map())
+    } yield (ctx4, z, a, b)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, a, b) =>
+      val scope = ctx.globalScope
       def lub(left: Type, right: Type) = NoFuture.leastCommonSupertype(scope, left, right)
       def glb(left: Type, right: Type) = NoFuture.greatestCommonSubtype(scope, left, right)
 
@@ -277,38 +292,42 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (prettyNamed("glb(a, b)", glb_ab)
         |: prettyNamed("lub(a, b))", lub_ab)
         |: prettyNamed("lub(a, glb(a, b))", lubRes)
-        |: prettyNamed("lub(lub(a, b), c)", glbRes)
-        |: Prop.all(NoFuture.equalTypesOLD(su, scope, lubRes, glbRes)))
+        |: prettyNamed("glb(lub(a, b), a)", glbRes)
+        |: Prop.all(
+          NoFuture.varEqualTypes(scope + (z -> a), z, glbRes),
+          NoFuture.varEqualTypes(scope + (z -> lubRes), z, a)))
     }}
   }
 
   property("NoFuture.leastCommonSupertype -- a <: b ==> lub(a, b) == b") = {
-    val generator: Gen[(SymbolUniverse, Scope, Type, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, b) <- genType(ctx, Map())
-      (ctx3, a) <- genSubtype(ctx2, Map(), b)
-      su <- ctx3.toSymbolUniverse()
-    } yield (su, ctx3.globalScope, a, b)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, a, b) =>
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, b) <- genType(ctx2, Map())
+      (ctx4, a) <- genSubtype(ctx3, Map(), b)
+    } yield (ctx4, z, a, b)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, a, b) =>
+      val scope = ctx.globalScope
       def lub(left: Type, right: Type) = NoFuture.leastCommonSupertype(scope, left, right)
       val lub_ab = lub(a, b)
       (prettyNamed("lub(a, b)", lub_ab)
-        |: Prop.all(NoFuture.equalTypesOLD(su, scope, lub_ab, b)))
+        |: Prop.all(NoFuture.varEqualTypes(scope + (z -> lub_ab), z, b)))
     }}
   }
 
   property("NoFuture.greatestCommonSubtype -- a <: b ==> glb(a, b) == a") = {
-    val generator: Gen[(SymbolUniverse, Scope, Type, Type)] = for {
+    val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx <- genGlobalScope()
-      (ctx2, b) <- genType(ctx, Map())
-      (ctx3, a) <- genSubtype(ctx2, Map(), b)
-      su <- ctx3.toSymbolUniverse()
-    } yield (su, ctx3.globalScope, a, b)
-    Prop.forAllNoShrink(generator){prettyProp{case (su, scope, a, b) =>
+      (ctx2, z) <- ctx.newSymbol()
+      (ctx3, b) <- genType(ctx2, Map())
+      (ctx4, a) <- genSubtype(ctx3, Map(), b)
+    } yield (ctx4, z, a, b)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, a, b) =>
+      val scope = ctx.globalScope
       def glb(left: Type, right: Type) = NoFuture.greatestCommonSubtype(scope, left, right)
       val glb_ab = glb(a, b)
       (prettyNamed("glb(a, b)", glb_ab)
-        |: Prop.all(NoFuture.equalTypesOLD(su, scope, glb_ab, a)))
+        |: Prop.all(NoFuture.varEqualTypes(scope + (z -> glb_ab), z, a)))
     }}
   }
 
@@ -426,7 +445,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       val scope = ctx.globalScope
       val res = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, b)}
       (prettyNamed("res", res)
-        |: Prop.protect(res != None && NoFuture.equalTypes(scope, res.get, b)))
+        |: Prop.protect(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, b)))
     }}
   }
 
@@ -446,7 +465,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       val scope = ctx.globalScope
       val res = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, a)}
       (prettyNamed("res", res)
-        |: Prop.protect(res != None && NoFuture.equalTypes(scope, res.get, a)))
+        |: Prop.protect(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, a)))
     }}
   }
 
@@ -488,6 +507,8 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
+  // TODO raise(a,a)==A?
+
   property("NoFuture.varRaise -- raise(a, Que) = a") = {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type)] = for {
       ctx1 <- genGlobalScope()
@@ -519,10 +540,10 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
-  // TODO solveConstraint
+  // TODO solveConstraint when the vars to be solves appear in multiple
+  // places.
 
-  // TODO typeProjectUpper,typeProjectLower,glb,lub: are not really "utils".
-  // Should probably be moved do separate.
+  // TODO split this spec into multiple specs?
 
   // TODO typeProjectUpper: result does not contains rectypes?
   // TODO typeProjectLower -- multi.  (TODO: depends on lub....)
