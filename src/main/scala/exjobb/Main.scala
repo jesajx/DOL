@@ -156,7 +156,10 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
       FieldDecl(3, TypeProj(33, 44)),
       FieldDecl(1, TypeProj(22, 55))
     ),
+      AndType(
+      FieldDecl(3, TypeProj(33, 44)),
       FieldDecl(1, TypeProj(22, 55))
+    )
     )
   ),
   //AndType(
@@ -200,6 +203,62 @@ val (GlobalContext(scope1, nextSymbol), z, r, a, p): (GlobalContext, Symbol, Sym
   //  FieldDecl(1, Que)
   //)
 )
+
+//( // TODO debug slowness of dnf
+//  GlobalContext(
+//    Map(
+//      33 -> TypeDecl(44, Bot, Top),
+//      22 -> TypeDecl(55, Bot, Top)
+//    ),
+//    1000
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    AndType(
+//      FieldDecl(1, TypeProj(33, 44)),
+//      FieldDecl(2, TypeProj(22, 55))
+//    ),
+//    AndType(
+//      FieldDecl(1, TypeProj(22, 55)),
+//      FieldDecl(1, TypeProj(22, 55))
+//    )
+//  ),
+//  //AndType(
+//  //  AndType(FieldDecl(2, Top), FieldDecl(3, TypeProj(4, 5))),
+//  //  AndType(
+//  //    AndType(
+//  //      TypeDecl(9, Bot, Bot),
+//  //      AndType(
+//  //        FieldDecl(
+//  //          10,
+//  //          TypeDecl(
+//  //            11,
+//  //            Bot,
+//  //            AndType(
+//  //              FieldDecl(12, Top),
+//  //              FieldDecl(13, FieldDecl(14, Bot))
+//  //            )
+//  //          )
+//  //        ),
+//  //        TypeDecl(15, Bot, Bot)
+//  //      )
+//  //    ),
+//  //    AndType(
+//  //      TypeDecl(16, TypeProj(17, 18), TypeProj(17, 18)),
+//  //      TypeDecl(24, Top, Top)
+//  //    )
+//  //  )
+//  //),
+//  AndType(
+//    Que,
+//    Que
+//  )
+//  //AndType(
+//  //  FieldDecl(1, Que),
+//  //  FieldDecl(1, Que)
+//  //)
+//)
 
 //(
 //  GlobalContext(Map(13 -> TypeDecl(14, Bot, Top)), 15),
@@ -376,10 +435,12 @@ val scope = scope1 + (z -> a)
 val (numQues, labeledPrototype) = prepMatch(scope, r, p)
 
 val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
+val solveSetVariance = gatherVariance2(r, labeledPrototype, Contravariant)
 
 val constraint = gatherConstraints(scope, solveSet, labeledPrototype, a, Contravariant, Set(), Set())
 
-//pprint.pprintln(constraint, height=4000000)
+
+P.namedln("constraint", constraint)
 
 val dnfStartTime = System.nanoTime()
 val dnfConstraint = dnf(constraint)
@@ -394,16 +455,26 @@ val cnfEndTime = System.nanoTime()
 
 def shortenlistlist(listlist: Stream[Stream[Constraint]]) =
   listlist.map{_.map{
-    case MultiAndConstraint(m) if m.size == 1 =>
-      (m.toSeq)(0)._1
-    case MultiAndConstraint(m) if m.size != 1 =>
-      TypeProj(-1,0)
-    case TrueConstraint =>
-      TypeProj(-1,+1)
-    case FalseConstraint =>
-      TypeProj(-1,-1)
-    case _ =>
-      TypeProj(-4500,-1)
+  //  case MultiAndConstraint(m) if m.size == 1 =>
+  //    (m.toSeq)(0)._1
+  //  case MultiAndConstraint(m) if m.size != 1 =>
+  //    TypeProj(-1,0)
+  //  case TrueConstraint =>
+  //    TypeProj(-1,+1)
+  //  case FalseConstraint =>
+  //    TypeProj(-1,-1)
+  //  case _ =>
+  //    TypeProj(-4500,-1)
+  case MultiAndConstraint(m) if m.size == 1 =>
+    val (p, (s, l, u)) = (m.toSeq)(0)
+    solveSetVariance(p) match {
+      case Covariant =>
+        p -> (+1, l, u)
+      case Contravariant =>
+        p -> (-1, l, u)
+      case _ =>
+        p -> (0, l, u)
+    }
   }}
 
 val dl = dnfLists(dnfConstraint)
@@ -438,8 +509,9 @@ println(s"size(constraint) = ${constraintSize(constraint)}")
 println(s"size(dnfConstraint) = ${constraintSize(dnfConstraint)}")
 println(s"size(cnfConstraint) = ${constraintSize(cnfConstraint)}")
 
+
 val startTime = System.nanoTime()
-val res2 = solveConstraint(scope, solveSet, constraint, labeledPrototype, Contravariant)
+val res2 = solveConstraint(scope, solveSet, solveSetVariance, constraint, labeledPrototype, Contravariant)
 val endTime = System.nanoTime()
 
 pprint.pprintln(res2, height=4000000)
@@ -695,8 +767,10 @@ println(s"size(constraint) = ${constraintSize(constraint)}")
 println(s"size(dnfConstraint) = ${constraintSize(dnfConstraint)}")
 
 
+val solveSetVariance = gatherVariance2(r, labeledPrototype, Covariant)
+
 val startTime = System.nanoTime()
-val res2 = solveConstraint(scope, solveSet, constraint, labeledPrototype, Covariant)
+val res2 = solveConstraint(scope, solveSet, solveSetVariance, constraint, labeledPrototype, Covariant)
 val endTime = System.nanoTime()
 
 pprint.pprintln(res2, height=4000000)

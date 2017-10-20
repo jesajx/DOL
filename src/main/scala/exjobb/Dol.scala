@@ -263,7 +263,7 @@ object Dol {
   case class OrConstraint(left: Constraint, right: Constraint) extends Constraint
   //case class SubtypeConstraint(scope: Scope, left: Type, right: Type, variance: Variance) extends Constraint // TODO add Variance here?
   case class AndConstraint(left: Constraint, right: Constraint) extends Constraint
-  type ConstraintMap = Map[TypeProj, (Scope, Type, Type, Variance)]
+  type ConstraintMap = Map[TypeProj, (Scope, Type, Type)]
   case class MultiAndConstraint(constraints: ConstraintMap) extends Constraint
 
 
@@ -523,16 +523,15 @@ object Dol {
     }
 
     def mergeConstraints(left: ConstraintMap, right: ConstraintMap): ConstraintMap = {
-      mapUnion(left, right){case ((s1, l1, u1, v1), (s2, l2, u2, v2)) =>
+      mapUnion(left, right){case ((s1, l1, u1), (s2, l2, u2)) =>
         val commonScope = s1 ++ s2 // TODO will concatenating scopes work? If s1(x) == s2(x) and or "x" has otherwise been renamed... having different scopes seems wrong in the first place...
-        val commonVariance = mergeVariance(v1, v2)
-        (commonScope, leastCommonSupertype(commonScope, l1, l2), greatestCommonSubtype(commonScope, u1, u2), commonVariance)
+        (commonScope, leastCommonSupertype(commonScope, l1, l2), greatestCommonSubtype(commonScope, u1, u2))
       }
     }
 
     def mergeConstraintsOption(left: ConstraintMap, right: ConstraintMap): Option[ConstraintMap] = {
       val res = mergeConstraints(left, right)
-      if (res.forall{case (p, (s, l, u, v)) => isSubtypeOf(s, l, u)})
+      if (res.forall{case (p, (s, l, u)) => isSubtypeOf(s, l, u)})
         Some(res)
       else
         None
@@ -587,67 +586,14 @@ object Dol {
         case (NoSolution, NoSolution) => NoSolution
     }
 
-    def solveCnf(topScope: Scope, solveSet: Set[TypeProj], constraint: Constraint, pattern: Type, topVariance: Variance): Option[Type] = {
-      val defaults = solveSet.map(p => (p -> (Map(): Scope, Bot, Top, ConstantVariance))).toMap
-
-      val solveSetVariance = gatherVariance(constraint)
-
-
-      def subsolve(constraint: Constraint): Option[ConstraintMap] = constraint match {
-        case MultiAndConstraint(m) => Some(defaults ++ m)
-        case AndConstraint(left, right) =>
-          for {
-            leftRes  <- subsolve(left)
-            rightRes <- subsolve(right)
-          } yield mergeConstraints(leftRes, rightRes)
-        case TrueConstraint =>
-          Some(defaults)
-        case FalseConstraint => // FalseConstraints
-          None
-        case _ => // OrConstraint
-          ??? // should not happen if DNF.
-      }
-
-      cnfCartesian(cnfLists(cnf(constraint))).flatMap{subsolve(_)}.map{res =>
-        val badBounds = res.map{case (p, (scope, lower, upper, _)) =>
-          p-> (!isSubtypeOf(scope, lower, upper)
-            || (solveSetVariance(p) == Invariant
-              && !isSubtypeOf(scope, upper, lower)))
-        }
-        if (badBounds.exists{_._2}) {
-          //pprint.pprintln((res, badBounds), height=4000000)
-          NoSolution
-        } else {
-          val mapping = res.map{case (proj, (scope, lower, upper, _)) =>
-            val typ = solveSetVariance(proj) match {
-              case Covariant        => lower
-              case Contravariant    => upper
-              case ConstantVariance => lower
-              case Invariant        => lower
-            }
-            proj -> typ
-          }
-          Solution(applyConstraintSolution(pattern, mapping))
-        }
-      }.filter{_ != NoSolution}.fold[SolveResult](NoSolution){(left, right) =>
-        orSolveResult(topScope, topVariance, left, right)
-      } match {
-        case Solution(typ) => Some(typ)
-        case Inconsistent     => ??? ; None // TODO can this happen?
-        case NoSolution       => None
-      }
-    }
-
     // TODO constraints and variance should be calculated separately...
 
-    def solveConstraint(topScope: Scope, solveSet: Set[TypeProj], constraint: Constraint, pattern: Type, topVariance: Variance): Option[Type] = {
+    def solveConstraint(topScope: Scope, solveSet: Set[TypeProj], solveSetVariance: Map[TypeProj, Variance], constraint: Constraint, pattern: Type, topVariance: Variance): Option[Type] = {
       //if (true) return solveCnf(topScope, solveSet, constraint, pattern, topVariance) // TODO
 
-      val defaults = solveSet.map(p => (p -> (Map(): Scope, Bot, Top, ConstantVariance))).toMap
+      val defaults: ConstraintMap = solveSet.map(p => (p -> (Map(): Scope, Bot, Top))).toMap
 
-      val solveSetVariance = gatherVariance(constraint)
-
-      def subsolve(constraint: Constraint): Option[Map[TypeProj, (Scope, Type, Type, Variance)]] = constraint match {
+      def subsolve(constraint: Constraint): Option[ConstraintMap] = constraint match {
         case MultiAndConstraint(m) => Some(m)//Some(defaults ++ m)
         case AndConstraint(left, right) =>
           for {
@@ -669,7 +615,7 @@ object Dol {
         case _ =>
           subsolve(constraint) match {
             case Some(res) =>
-              val badBounds = res.map{case (p, (scope, lower, upper, _)) =>
+              val badBounds = res.map{case (p, (scope, lower, upper)) =>
                 p-> (!isSubtypeOf(scope, lower, upper)
                   || (solveSetVariance(p) == Invariant
                     && !isSubtypeOf(scope, upper, lower)))
@@ -678,7 +624,7 @@ object Dol {
                 //pprint.pprintln((res, badBounds), height=4000000)
                 NoSolution
               } else {
-                val mapping = res.map{case (proj, (scope, lower, upper, _)) =>
+                val mapping = res.map{case (proj, (scope, lower, upper)) =>
                   val typ = solveSetVariance(proj) match {
                     case Covariant        => lower
                     case Contravariant    => upper
@@ -694,9 +640,9 @@ object Dol {
       }
 
       def solve2(ors: Stream[Constraint]): SolveResult = {
-        ors.flatMap{subsolve(_)}.map{res =>
+        ors.flatMap{subsolve(_)}.map{defaults ++ _}.map{res =>
           if (res.keys != defaults.keys) ???
-          val badBounds = res.map{case (p, (scope, lower, upper, _)) =>
+          val badBounds = res.map{case (p, (scope, lower, upper)) =>
             p-> (!isSubtypeOf(scope, lower, upper)
               || (solveSetVariance(p) == Invariant
                 && !isSubtypeOf(scope, upper, lower)))
@@ -705,7 +651,7 @@ object Dol {
             //pprint.pprintln((res, badBounds), height=4000000)
             NoSolution
           } else {
-            val mapping = res.map{case (proj, (scope, lower, upper, _)) =>
+            val mapping = res.map{case (proj, (scope, lower, upper)) =>
               val typ = solveSetVariance(proj) match {
                 case Covariant        => lower
                 case Contravariant    => upper
@@ -779,6 +725,13 @@ object Dol {
       def add(a: T, b: T): T = {cont => {m => a(cont)(m) ++ b(cont)(m)}}
     }
 
+    def dnfStream3(constraint: Constraint): ConstraintStreamRingCont.T = constraint match {
+      case OrConstraint(left, right)  => ConstraintStreamRingCont.add(dnfStream3(left), dnfStream3(right))
+      case AndConstraint(left, right) => ConstraintStreamRingCont.mul(dnfStream3(left), dnfStream3(right))
+      case TrueConstraint             => ConstraintStreamRingCont.one
+      case FalseConstraint            => ConstraintStreamRingCont.zero
+      case MultiAndConstraint(m)      => {cont => m2 => cont(mergeConstraints(m2, m))}
+    }
 
     object ConstraintStreamRing {
       type T = Stream[ConstraintMap]
@@ -790,22 +743,6 @@ object Dol {
         z <- Stream(mergeConstraintsOption(x, y)).flatten
       } yield z
       def add(a: T, b: T): T = a #::: b
-    }
-
-    def dnfStream3(constraint: Constraint): ConstraintStreamRingCont.T = constraint match {
-      case OrConstraint(left, right)  => ConstraintStreamRingCont.add(dnfStream3(left), dnfStream3(right))
-      case AndConstraint(left, right) => ConstraintStreamRingCont.mul(dnfStream3(left), dnfStream3(right))
-      case TrueConstraint             => ConstraintStreamRingCont.one
-      case FalseConstraint            => ConstraintStreamRingCont.zero
-      case MultiAndConstraint(m)      => {cont => m2 => cont(mergeConstraints(m2, m))}
-    }
-
-    def dnfStream4(constraint: Constraint): ConstraintStreamRing.T = constraint match {
-      case OrConstraint(left, right)  => ConstraintStreamRing.add(dnfStream2(left), dnfStream2(right))
-      case AndConstraint(left, right) => ConstraintStreamRing.mul(dnfStream2(left), dnfStream2(right))
-      case TrueConstraint             => ConstraintStreamRing.one
-      case FalseConstraint            => ConstraintStreamRing.zero
-      case MultiAndConstraint(m)      => Stream(m)//Stream(mergeConstraintsOption(m, Map())).flatten
     }
 
     def dnfStream2(constraint: Constraint): ConstraintStreamRing.T = constraint match {
@@ -850,15 +787,6 @@ object Dol {
       case _ => constraint
     }
 
-
-    def subtypeConstraint(solveSet: Set[TypeProj], scope: Scope, left: Type, right: Type, variance: Variance): Constraint = (left, right) match {
-      case (proj: TypeProj, _) if solveSet(proj) =>
-        MultiAndConstraint(Map(proj -> (scope, Bot, right, variance)))
-      case (_, proj: TypeProj) if solveSet(proj) =>
-        MultiAndConstraint(Map(proj -> (scope, left, Top, variance)))
-      case _ =>
-        ??? // Should not happen.
-    }
 
     def andConstraint(left: Constraint, right: Constraint): Constraint = (left, right) match {
       case (TrueConstraint, _)  => right
@@ -1332,13 +1260,20 @@ object Dol {
       }
     }
 
-    def gatherVariance(constraint: Constraint): Map[TypeProj, Variance] = constraint match {
-      case AndConstraint(left, right) =>
-        mapUnion(gatherVariance(left), gatherVariance(right)){mergeVariance(_, _)}
-      case OrConstraint(left, right) =>
-        mapUnion(gatherVariance(left), gatherVariance(right)){mergeVariance(_, _)}
-      case MultiAndConstraint(m) =>
-        m.mapValues{case (_, _, _, v) => v}
+    def gatherVariance2(r: Symbol, typ: Type, variance: Variance): Map[TypeProj, Variance] = typ match {
+      case FunType(x, xType, xResType) =>
+        mapUnion(gatherVariance2(r, xType, reverseVariance(variance)),
+                 gatherVariance2(r,xResType, variance)){mergeVariance(_, _)}
+      case AndType(left, right) =>
+        mapUnion(gatherVariance2(r, left, variance),
+                 gatherVariance2(r, right, variance)){mergeVariance(_, _)}
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        mapUnion(gatherVariance2(r, aLowerType, reverseVariance(variance)),
+                 gatherVariance2(r, aUpperType, variance)){mergeVariance(_, _)}
+      case FieldDecl(a, aType) =>
+        gatherVariance2(r, aType, variance)
+      case proj @ TypeProj(x, _) if x == r =>
+        Map(proj -> variance)
       case _ => Map()
     }
 
@@ -1357,6 +1292,9 @@ object Dol {
           case _ => None
         }
       }
+
+      // TODO instead of storing scope in everyconstraint, just make sure
+      // bound vars are unique and share a map for all local scopes.
 
       // TODO replace variance in rec by Contravariant="widen" and Covariante="tighten"?
 
@@ -1429,17 +1367,13 @@ object Dol {
 
         case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b))  =>
           if (aProj == bProj) {
-            if (solveSet(aProj))
-              MultiAndConstraint(Map(aProj -> (scope, Bot, Top, variance))) // NOTE: in order to gather variance.
-            else
-              TrueConstraint
+            TrueConstraint
           } else if (solveSet(aProj) && solveSet(bProj)) {
-            MultiAndConstraint(Map(aProj -> (scope, Top, Bot, variance), bProj -> (scope, Top, Bot, variance))) // NOTE: in order to gather variance.
-            //FalseConstraint
+            FalseConstraint
           } else if (solveSet(aProj) && !solveSet(bProj)) {
-            MultiAndConstraint(Map(aProj -> (scope, Bot, to, variance)))
+            MultiAndConstraint(Map(aProj -> (scope, Bot, to)))
           } else if (!solveSet(aProj) && solveSet(bProj)) {
-            MultiAndConstraint(Map(bProj -> (scope, from, Top, variance)))
+            MultiAndConstraint(Map(bProj -> (scope, from, Top)))
           } else { // if (!solveSet(aProj) && !solveSet(bProj))
             val aUpperType = if (visitedLeft(aProj)) Top else typeProjectUpper(scope, x, a).getOrElse{error()}
             val bLowerType = if (visitedRight(bProj)) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
@@ -1451,11 +1385,11 @@ object Dol {
 
         case (aProj @ TypeProj(x, a), _) if solveSet(aProj) =>
           val bLower = smallest(to) // TODO get rid of all type-projections?
-          MultiAndConstraint(Map(aProj -> (scope, Bot, bLower, variance)))
+          MultiAndConstraint(Map(aProj -> (scope, Bot, bLower)))
 
         case (_, bProj @ TypeProj(y, b)) if solveSet(bProj) =>
           val aUpperType = largest(from) // TODO get rid of all type-projections?
-          MultiAndConstraint(Map(bProj -> (scope, aUpperType, Top, variance)))
+          MultiAndConstraint(Map(bProj -> (scope, aUpperType, Top)))
 
         case (AndType(left, right), _) =>
           // TODO factor duplicate declarations first? i.e. AndType(FieldDef(a,A), FieldDef(a,B)) --> FieldDef(a, AndType(A,B)).
@@ -1463,14 +1397,8 @@ object Dol {
           // TODO this should be optimized somehow. The problem is if left
           // contains projs from solveSet...
           orConstraint(
-            andConstraint(
-              rec(from=left),
-              rec(from=right, to=Top) // NOTE: we still have to decide the variance of right.
-            ),
-            andConstraint(
-              rec(from=right),
-              rec(from=left, to=Top)
-            )
+            rec(from=left),
+            rec(from=right)
           )
 
         case (aProj @ TypeProj(x, a), _) if !solveSet(aProj) =>
@@ -1503,8 +1431,9 @@ object Dol {
     def raise(scope: Scope, r: Symbol, lowerType: Type, upperPrototype: Prototype): Option[Type] = {
       val (numQues, labeledPrototype) = prepMatch(scope, r, upperPrototype)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
+      val solveSetVariance = gatherVariance2(r, labeledPrototype, Covariant)
       val constraint = gatherConstraints(scope, solveSet, lowerType, labeledPrototype, Covariant)
-      solveConstraint(scope, solveSet, constraint, labeledPrototype, Covariant)
+      solveConstraint(scope, solveSet, solveSetVariance, constraint, labeledPrototype, Covariant)
     }
 
     /** Greatest subtype L of `upperType` such that L matches `lowerPrototype`.
@@ -1512,9 +1441,10 @@ object Dol {
      */
     def lower(scope: Scope, r: Symbol, lowerPrototype: Prototype, upperType: Type): Option[Type] = {
       val (numQues, labeledPrototype) = prepMatch(scope, r, lowerPrototype)
+      val solveSetVariance = gatherVariance2(r, labeledPrototype, Contravariant)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
       val constraint = gatherConstraints(scope, solveSet, labeledPrototype, upperType, Contravariant)
-      solveConstraint(scope, solveSet, constraint, labeledPrototype, Contravariant)
+      solveConstraint(scope, solveSet, solveSetVariance, constraint, labeledPrototype, Contravariant)
     }
 
     /** Like raise(scope(z), prototype), but does eliminateRecursiveTypes(_, z) first.
