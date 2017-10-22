@@ -43,7 +43,7 @@ object ScalaCheckUtils {
   }
 
 
-  val pprintTerminalWidth = 44
+  val pprintTerminalWidth = 75
   val pprintSbtLogPrefix = "[info] "
   val pprintWidth = pprintTerminalWidth - pprintSbtLogPrefix.size
   val pprintHeight = 1000

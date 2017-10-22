@@ -29,6 +29,11 @@ object DolGenerators {
       const(new SymbolUniverse(nextSymbol))
   }
   // TODO Hide GlobalContext in monad?
+  //
+  // TODO Generator[T]: (seed,size) => T
+  // TODO Generator[T]: {minSize: Int}
+  // TODO Generator[T,B]: {state: B}  // e.g. B=GlobalContext
+  // TODO oneOf(a,b).minSize = min(a.minSize, b.minSize)
 
   def genGlobalScope(ctx: GlobalContext = GlobalContext()): Gen[GlobalContext] = const(ctx)
 
@@ -45,6 +50,8 @@ object DolGenerators {
 
 
 
+  // TODO reuse typemembers. maybe have a set of typemembers in globalscope,
+  // and generate like oneOf(existingMemberSymbols, newMember)
 
 
 
@@ -91,8 +98,6 @@ object DolGenerators {
       }
     )
 
-
-
   def genSupertype(ctx: GlobalContext, scope: Scope, subtype: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
     if (size == 0)
       Gen.fail
@@ -103,98 +108,127 @@ object DolGenerators {
         oneOf(const((ctx, subtype)), const((ctx, Top)))
     } else {
       val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match { // TODO!!!
-//        case FunType(x, xType, resType) if (size >= 3) =>
-//          Seq(for {
-//            subSize <- size - 1
-//            argSize <- Gen.choose(1, subSize)
-//            resSize <- subSize - argSize
-//            xSubtype     <- Gen.resize(argSize, genSubtype(su, scope, xType, visited))
-//            resSupertype <- Gen.resize(resSize, genSupertype(su, scope + (x -> xSubtype), resType, visited))
-//            // TODO supertypes of projs? // remove/keep/supertype
-//          } yield FunType(x, xSubtype, resSupertype))
-//        case AndType(left, right) if (size >= 3) =>
-//          val leftGen = genSupertype(su, scope, left, visited)
-//          val rightGen = genSupertype(su, scope, right, visited)
-//          Seq(oneOf(leftGen, rightGen)) // TODO also and(leftGen, rightGen)? beware of infinite recursion...
-//        case RecType(x, xType) if (size >= 2) =>
-//          val z = su.newSymbol()
-//          Seq(for {
-//            xSupertype <- genSupertype(su, scope + (x -> xType), xType, visited)
-//          } yield RecType(z, NoFuture.varEliminatingTransform(su, scope + (x -> xType) + (z -> xSupertype), x, z, xSupertype)))
-//        case aProj @ TypeProj(x, a) if !visited(aProj) => // TODO visitedSet
-//          NoFuture.typeProjectUpper(su, scope, x, a) match {
-//            case Some(aUpperType) => Seq(genSupertype(su, scope, aUpperType, visited + aProj))
-//            case None => ???; Seq()
-//          }
-//        case FieldDecl(a, aType) =>
-//          Seq(for {
-//            aSupertype <- genSupertype(su, scope, aType, visited)
-//          } yield FieldDecl(a, aSupertype))
-//        case TypeDecl(a, aLowerType, aUpperType) =>
-//          Seq(for {
-//            aSubtype <- genSubtype(su, scope, aLowerType, visited)
-//            aSupertype <- genSupertype(su, scope, aUpperType, visited)
-//          } yield TypeDecl(a, aSubtype, aSupertype))
-//        case Bot =>
-//          val x = su.newSymbol()
-//          Seq(genSupertype(su, scope, FunType(x, Top, Bot), visited))
+        case FunType(x, xType, resType) if (size >= 3) =>
+          Seq(for {
+            (argSize, resSize)   <- splitSizeNonZero(size - 1)
+            (ctx2, xSubtype)     <- Gen.resize(argSize, genSubtype(ctx, scope, xType, visited))
+            (ctx3, resSupertype) <- Gen.resize(resSize, genSupertype(ctx2, scope + (x -> xSubtype), resType, visited))
+            // TODO supertypes of projs? // remove/keep/supertype
+          } yield (ctx3, FunType(x, xSubtype, resSupertype)))
+        case AndType(left, right) =>
+          Seq(
+              Gen.resize(size,  genSupertype(ctx, scope, left, visited)),
+              Gen.resize(size,  genSupertype(ctx, scope, right, visited))
+          ) ++ (
+            if(size >= 3)
+              Some(for {
+                (leftSize, rightSize) <- splitSizeNonZero(size - 1)
+                (ctx2, leftSuper)     <- Gen.resize(leftSize,  genSupertype(ctx, scope, left, visited))
+                (ctx3, rightSuper)    <- Gen.resize(rightSize, genSupertype(ctx2, scope, right, visited))
+              } yield (ctx3, AndType(leftSuper, rightSuper)))
+            else
+              None
+          )
+
+        case aProj @ TypeProj(x, a) if !visited(aProj) =>
+          val aUpperType = NoFuture.typeProjectUpper(ctx.globalScope ++ scope, x, a).get
+          Seq(Gen.resize(size, genSupertype(ctx, scope, aUpperType, visited + aProj)))
+        case FieldDecl(a, aType) if (size >= 2) =>
+          Seq(for {
+            (ctx2, aSupertype) <- Gen.resize(size - 1, genSupertype(ctx, scope, aType, visited))
+          } yield (ctx2, FieldDecl(a, aSupertype)))
+        case TypeDecl(a, aLowerType, aUpperType) if (size >= 3) =>
+          Seq(for {
+            (lowerSize, upperSize) <- splitSizeNonZero(size - 1)
+            (ctx2, aSubtype)       <- Gen.resize(lowerSize, genSubtype(ctx, scope, aLowerType, visited))
+            (ctx3, aSupertype)     <- Gen.resize(upperSize, genSupertype(ctx2, scope, aUpperType, visited))
+          } yield (ctx3, TypeDecl(a, aSubtype, aSupertype)))
+        case Bot =>
+          Seq(genType(ctx, scope))
         case _ =>
           Seq()
       }
       // TODO and(self, super(self))? and(super(self), super(self))?
 
-      oneOf(const((ctx, subtype)), const((ctx, Top)), extra: _*)
+      oneOf(const((ctx, subtype)), const((ctx, Top)), extra.toSeq: _*)
     }
   }
 
   def genSubtype(ctx: GlobalContext, scope: Scope, supertype: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
-    if (size == 0)
+    if (size <= 0)
       Gen.fail
-    else if (size <= 10) { // TODO bad!!! needs to be a bit bigger.
-      if (supertype.totNumNodes == 1)
-        oneOf(const((ctx, supertype)), const((ctx, Bot)))
-      else
-        const((ctx, Bot))
-    } else {
-      val extra: Seq[Gen[(GlobalContext, Type)]] = supertype match {
+    else {
+      val extra: Option[Gen[(GlobalContext, Type)]] = supertype match {
         case FunType(x, xType, resType) if (size >= 3) =>
-          Seq(for {
-            (argSize, resSize) <- splitSizeNonZero(size - 1)
-            // TODO is this correct or is it necessary to do a
-            // varEliminatingTransform or similar?
-            (ctx2, xSupertype) <- Gen.resize(argSize, genSupertype(ctx, scope, xType, visited))
-            (ctx3, resSubtype) <- Gen.resize(resSize, genSubtype(ctx2, scope + (x -> xSupertype), resType, visited))
-            // TODO supertypes of projs? // remove/keep/supertype
-          } yield (ctx3, FunType(x, xSupertype, resSubtype)))
+          None // TODO
+          //Some(for {
+          //  (argSize, resSize) <- splitSizeNonZero(size - 1)
+          //  // TODO is this correct or is it necessary to do a
+          //  // varEliminatingTransform or similar? Yes, it leads to
+          //  problems. e.g. Fun(x, TypeDecl(a,A,B), x.a) being replaced by Fun(x, Top, x.a)
+          //  (ctx2, xSupertype) <- Gen.resize(argSize, genSupertype(ctx, scope, xType, visited))
+          //  (ctx3, resSubtype) <- Gen.resize(resSize, genSubtype(ctx2, scope + (x -> xSupertype), resType, visited))
+          //} yield (ctx3, FunType(x, xSupertype, resSubtype)))
         case AndType(left, right) if (size >= 3) =>
-          Seq(for {
+          Some(for {
             (leftSize, rightSize) <- splitSizeNonZero(size - 1)
-            (ctx2, leftGen)  <- Gen.resize(leftSize, genSubtype(ctx, scope, left, visited))
-            (ctx3, rightGen) <- Gen.resize(rightSize, genSubtype(ctx2, scope, right, visited))
-          } yield (ctx3, AndType(leftGen, rightGen)))
+            (ctx2, leftSub)  <- Gen.resize(leftSize,  genSubtype(ctx, scope, left, visited))
+            (ctx3, rightSub) <- Gen.resize(rightSize, genSubtype(ctx2, scope, right, visited))
+          } yield (ctx3, AndType(leftSub, rightSub)))
         case aProj @ TypeProj(x, a) if !visited(aProj) =>
-          NoFuture.typeProjectLower(ctx.globalScope ++ scope, x, a) match {
-            case Some(aLowerType) => Seq(Gen.resize(size, genSubtype(ctx, scope, aLowerType, visited + aProj)))
-            case None => ???; Seq()
-          }
-//        case FieldDecl(a, aType) =>
-//          Seq(for {
-//            aSubtype <- genSubtype(su, scope, aType, visited)
-//          } yield FieldDecl(a, aSubtype))
+          val aLowerType = NoFuture.typeProjectLower(ctx.globalScope ++ scope, x, a).get
+          Some(Gen.resize(size, genSubtype(ctx, scope, aLowerType, visited + aProj))) // TODO is it necessary to track visited?
+        case FieldDecl(a, aType) =>
+          Some(for {
+            (ctx2, aSubtype) <- Gen.resize(size - 1, genSubtype(ctx, scope, aType, visited))
+          } yield (ctx2, FieldDecl(a, aSubtype)))
 //        case TypeDecl(a, aLowerType, aUpperType) =>
-//          Seq() // TODO Need to generate tighter interval without getting into the situation where upper <: lower.
-//        case Top =>
-//          val x = su.newSymbol()
-//          Seq(genSubtype(su, scope, FunType(x, Bot, Top), visited))
+//          Some() // TODO Need to generate tighter interval without getting into the situation where !(lower <: upper).
+        case Top =>
+          Some(genType(ctx, scope))
         case _ =>
-          Seq()
+          None
       }
 
-      // TODO AndType(supertype, genType)
+      val extra2: Option[Gen[(GlobalContext, Type)]] =
+        if (size >= 3)
+          Some(for {
+            (leftSize, rightSize) <- splitSizeNonZero(size - 1)
+            (ctx2, sub)      <- Gen.resize(leftSize, genSubtype(ctx, scope, supertype)) // NOTE: Since size decreases will not inf rec.
+            (ctx3, nonsense) <- Gen.resize(rightSize, genType(ctx2, scope))
+            Seq(left, right) <- Gen.pick(2, Seq(sub, nonsense))
+          } yield (ctx3, AndType(left, right)))
+        else
+          None
 
-      oneOf(const((ctx, supertype)), const((ctx, Bot)), extra: _*)
+      val hideBehindTypeProj =
+        //if (size >= 4)
+        //  Seq(for {
+        //    (lowerSize, upperSize) <- splitSizeNonZero(size - 2)
+        //    (ctx2, x) <- ctx.newSymbol()
+        //    (ctx3, a) <- ctx2.newSymbol()
+        //    (ctx4, upperType) <- Gen.resize(upperSize, genSubtype(ctx3, scope, supertype))
+        //    (ctx5, lowerType) <- Gen.resize(lowerSize, genSubtype(ctx4, scope, upperType))
+        //    ctx6 <- ctx5.withBinding(x -> TypeDecl(a, lowerType, upperType))
+        //    // TODO WROOOONG. leaking scope into globalScope.
+        //  } yield (ctx6, TypeProj(x, a)))
+        //else
+          Seq()
+
+      val noChange =
+        if (supertype.totNumNodes <= size)
+          Seq(const((ctx, supertype)))
+        else
+          Seq()
+
+      // TODO replace type with typeproj
+
+
+      oneOfGens(const((ctx, Bot)) +: (noChange ++ hideBehindTypeProj ++ extra.toSeq ++ extra2.toSeq))
     }
   }
+
+  // TODO genTypePair: oneOf: (genSubtype(b), b), (a, genSupertype(a))
 
   def genTypeProj(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, TypeProj)] = Gen.sized{ size =>
     val typeMembersInScope = (ctx.globalScope ++ scope).flatMap{case (x, xType) =>
@@ -339,6 +373,9 @@ object DolGenerators {
   // of AndTypes, replaces types with TypeProjs, etc.
 
   def genRecType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
+
+    // TODO add arbitrary types (e.g. funtypes)? not just typedecls and fielddecls?
+
     if (size < 2)
       Gen.fail
     else if (size == 2)
@@ -398,7 +435,6 @@ object DolGenerators {
       oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope))
     else
       oneOf(const((ctx, Top)), const((ctx, Bot)), genFunType(ctx, scope), genTypeProj(ctx, scope), genRecType(ctx, scope), genNonRecObjType(ctx, scope))
-    // TODO genRecType?
     // TODO genNonRecursiveObject
   }
 

@@ -67,7 +67,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     val generator: Gen[(GlobalContext, Symbol, Type, Type)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
-      (ctx3, typ) <- genType(ctx2, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx3, typ) <- genType(ctx2, Map())
     } yield (ctx3, z, typ, typ)
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, left, right) =>
       NoFuture.varEqualTypes(ctx.globalScope + (z -> left), z, right)
@@ -190,15 +190,17 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (ctx5, aUpperType) <- genType(ctx4, Map())
       (ctx6, aLowerType) <- genSubtype(ctx5, Map(), aUpperType)
       ctx7 <- ctx6.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
+      // TODO gen subtype if the TypeDecl (i.e. obfuscate with unneccessary
+      // type info)
       // TODO test multiple TypeDecls
       // TODO test inbetween typeprojs
       // TODO test rectypes
     } yield (ctx7, z, x, a, aLowerType)
     // TODO test multiple declarations (should result in AndType)
-    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, x, a, aUpperType) =>
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, x, a, aLowerType) =>
       val scope = ctx.globalScope
       val res = NoFuture.typeProjectLower(scope, x, a)
-      s"res = $res" |: Prop.all(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, aUpperType))
+      s"res = $res" |: Prop.all(res != None && NoFuture.varEqualTypes(scope + (z -> res.get), z, aLowerType))
     }}
   }
 
@@ -342,7 +344,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, b) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx4, b) <- genType(ctx3, Map())
       (ctx5, a) <- genSubtype(ctx4, Map(), b)
       (ctx6, p) <- genPrototypeFromType(ctx5, Map(), b)
     } yield (ctx6, r, z, a, b, p)
@@ -364,11 +366,13 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type, Prototype)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
-      (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, b) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
-      (ctx5, a) <- genSubtype(ctx4, Map(), b)
-      (ctx6, p) <- genPrototypeFromType(ctx5, Map(), a)
-    } yield (ctx6, r, z, a, b, p)
+      (ctx3, k) <- ctx2.newSymbol()
+      (ctx4, r) <- ctx3.newSymbol()
+      (ctx5, b) <- genType(ctx4, Map())
+      (ctx6, a) <- genSubtype(ctx5, Map(), b)
+      ctx7      <- ctx6.withBinding(k -> a)
+      (ctx8, p) <- genPrototypeFromType(ctx7, Map(), a)
+    } yield (ctx8, r, z, a, b, p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
@@ -389,7 +393,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx4, a) <- genType(ctx3, Map())
       (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
     } yield (ctx5, r, z, a, p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
@@ -411,7 +415,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (ctx3, r) <- ctx2.newSymbol()
       (ctx4, b) <- genType(ctx3, Map())
       (ctx5, p) <- genPrototypeFromType(ctx4, Map(), b)
-    } yield (ctx5, r, z, NoFuture.eliminateRecursiveTypes(b, z), p)
+    } yield (ctx5, r, z, b, p)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
@@ -436,7 +440,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (ctx3, r) <- ctx2.newSymbol()
       (ctx4, b) <- genType(ctx3, Map())
       (ctx5, a) <- genSubtype(ctx4, Map(), b)
-    } yield (ctx5, r, z, NoFuture.eliminateRecursiveTypes(a, z), NoFuture.eliminateRecursiveTypes(b, z))
+    } yield (ctx5, r, z, a, b)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
@@ -456,12 +460,12 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       (ctx3, r) <- ctx2.newSymbol()
       (ctx4, b) <- genType(ctx3, Map())
       (ctx5, a) <- genSubtype(ctx4, Map(), b)
-    } yield (ctx5, r, z, NoFuture.eliminateRecursiveTypes(a, z), NoFuture.eliminateRecursiveTypes(b, z))
+    } yield (ctx5, r, z, b, a)
     //def shrink(tuple: (GlobalContext, Symbol, Symbol, Type, Type)): Stream[(GlobalContext, Symbol, Symbol, Type, Type)] = {
     //  val (ctx, r, z, a, b) = tuple
     //  shrinkTypePair(ctx, ctx.globalScope, a, b).map{case (ctx2, a2, b2) => (ctx2, r, z, a2, b2)}
     //}
-    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b) =>
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, b, a) =>
       val scope = ctx.globalScope
       val res = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, a)}
       (prettyNamed("res", res)
@@ -474,7 +478,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx4, a) <- genType(ctx3, Map())
       (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
       (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
     } yield (ctx6, r, z, a, p, p2)
@@ -493,7 +497,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx4, a) <- genType(ctx3, Map())
       (ctx5, p) <- genPrototypeFromType(ctx4, Map(), a)
       (ctx6, p2) <- genPrototypeFromType(ctx5, Map(), p)
     } yield (ctx6, r, z, a, p, p2)
@@ -509,12 +513,12 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
 
   // TODO raise(a,a)==A?
 
-  property("NoFuture.varRaise -- raise(a, Que) = a") = {
+  property("NoFuture.varRaise -- raise(a, Que) = a") = { // TODO unnecessary?
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx4, a) <- genType(ctx3, Map())
     } yield (ctx4, r, z, a)
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a) =>
       val scope = ctx.globalScope
@@ -525,12 +529,12 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
   }
 
 
-  property("NoFuture.varLower -- lower(a, Que) = a") = {
+  property("NoFuture.varLower -- lower(a, Que) = a") = { // TODO unnecessary?
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, r) <- ctx2.newSymbol()
-      (ctx4, a) <- genType(ctx3, Map()).map{case (c,a) => (c, NoFuture.eliminateRecursiveTypes(a, z))}
+      (ctx4, a) <- genType(ctx3, Map())
     } yield (ctx4, r, z, a)
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a) =>
       val scope = ctx.globalScope
@@ -539,6 +543,11 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
         |: Prop.protect(aLowerP != None && NoFuture.varEqualTypes(scope + (z -> aLowerP.get), z, a)))
     }}
   }
+
+
+  // TODO a <: c && b <: c  ==>  lub(a,b) <: c  ???
+
+  // TODO varEqualType(t, simplify(t))
 
   // TODO solveConstraint when the vars to be solves appear in multiple
   // places.
