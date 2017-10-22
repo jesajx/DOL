@@ -453,7 +453,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
-  property("NoFuture.varLower -- a <: b ==> lower(b, a) == b") = {
+  property("NoFuture.varLower -- a <: b ==> lower(b, a) == a") = {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type)] = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
@@ -544,6 +544,26 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
     }}
   }
 
+
+  property("NoFuture.rigidEqualTypes -- rigidEqualTypes(a, a)") = { // TODO unnecessary?
+    val generator: Gen[(GlobalContext, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, a) <- genType(ctx1, Map())
+    } yield (ctx2, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, a) =>
+      Prop.protect(NoFuture.rigidEqualTypes(a, a))
+    }}
+  }
+
+  property("NoFuture.prepMatch -- !isPrototype(a) ==> prepMatch(_, a, 0) == (0, a)") = {
+    val generator: Gen[(GlobalContext, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, a) <- genType(ctx1, Map())
+    } yield (ctx2, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, a) =>
+      Prop.protect(NoFuture.prepMatch(-1, a, 0) == (0, a))
+    }}
+  }
 
   // TODO a <: c && b <: c  ==>  lub(a,b) <: c  ???
 

@@ -369,6 +369,17 @@ object Dol {
     // Will glb=min and lub=max work?
     // min=AndType?
 
+    /** Create a `Type` equivalent by subtyping to `AndType(left, right)`.
+     *
+     * This function helps simplify types in some simpler cases, e.g.
+     * `andType(Bot, Bot) == Bot` rather than `AndType(Bot, Bot)`
+     * since `Bot <: AndType(Bot, Bot)` and `AndType(Bot, Bot) <: Bot`.
+     *
+     * Be VERY careful about where this is called. The result of
+     * rigidEqualTypes may differ depending on if AndType was used directly or
+     * if this function was used.
+     *
+     */
     def andType(left: Type, right: Type): Type = (left, right) match {
       case (_, Top) => left
       case (Top, _) => right
@@ -556,7 +567,6 @@ object Dol {
     def orSolveResult(scope: Scope, r: Symbol, zOption: Option[Symbol], variance: Variance, left: SolveResult, right: SolveResult): SolveResult = (left, right) match {
         case (Inconsistent, _) | (_, Inconsistent) => Inconsistent
         case (Solution(leftType), Solution(rightType)) =>
-          //pprint.pprintln((leftType, rightType))
 
           val leftSubRight = (None != raise(scope, r, zOption, leftType, rightType))
           val rightSubLeft = (None != raise(scope, r, zOption, rightType, leftType))
@@ -578,7 +588,8 @@ object Dol {
               else if (rightSubLeft)
                 left
               else
-                Inconsistent
+                Solution(leastCommonSupertype(scope, leftType, rightType)) // TODO wrong?
+                //Inconsistent
             case Invariant =>
               if (leftSubRight && rightSubLeft)
                 left
@@ -692,7 +703,7 @@ object Dol {
     def applyConstraintSolution(typ: Type, solution: Map[TypeProj, Type]): Type = typ match {
       case proj: TypeProj if solution.contains(proj) => solution(proj)
       case AndType(left, right) =>
-        andType(applyConstraintSolution(left, solution), applyConstraintSolution(right, solution))
+        AndType(applyConstraintSolution(left, solution), applyConstraintSolution(right, solution))
       case FunType(x, xType, resType) =>
         val newXType = applyConstraintSolution(xType, solution)
         val newResType = applyConstraintSolution(resType, solution)
@@ -1073,7 +1084,11 @@ object Dol {
         case AndType(left, right) =>
           val (count2, leftType)   = inner(count, left)
           val (count3, rightType) = inner(count2, right)
-          (count3, andType(leftType, rightType))
+          // IMPORTANT: We MUST use AndType (case class) and not andType
+          // (function) here. The second one optimizes e.g. andType(Bot, _) =
+          // Bot. This causes problems if we need to call rigidEqualTypes
+          // later.
+          (count3, AndType(leftType, rightType))
         case FunType(x, xType, xResType) =>
           val (count2, newXType)    = inner(count, xType)
           val (count3, newXResType) = inner(count2, xResType)
@@ -1158,20 +1173,36 @@ object Dol {
       // TODO replace variance in rec by Contravariant="widen" and Covariante="tighten"?
 
       (from, to) match {
-        // TODO (_, Top)?
         case (RecType(x, xType), Top) => TrueConstraint // TODO hack
         case (Bot, RecType(y, yType)) => TrueConstraint // TODO hack
-
-        case (RecType(x, xType), _) if (zOption != None) =>
-          rec(from=typeRenameVar(x, zOption.get, xType))
-        case (_, RecType(y, yType)) if (zOption != None) =>
-          rec(to=typeRenameVar(y, zOption.get, yType))
 
         case (RecType(x, xType), RecType(y, yType)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
         case (RecType(x, xType), RecType(y, yType)) if x == y =>
-          rec(scope = scope+(x -> xType), from=xType, to=yType) // TODO vs RigidVariance?
+          if (rigidEqualTypes(from, to)) TrueConstraint else FalseConstraint
+          //rec(scope = scope+(x -> xType), from=xType, to=yType) // TODO rigidEqualTypes? // TODO vs RigidVariance?
 
+
+        case (AndType(left, right), RecType(y, yType)) =>
+          if (scope.contains(y)) ???
+          orConstraint(
+            orConstraint(
+              rec(from=left),
+              rec(from=right)
+            ),
+            rec(scope + (y -> yType), to=yType))
+
+
+        case (_, RecType(y, yType)) if zOption != None =>
+          // NOTE: In DOT we can't unwrap RHS, and therefore we must use LHS
+          // == RHS. HOWEVER, if zOption != None, we have the freedom to
+          // change LHS before we do the comparison, i.e. find a supertype of
+          // LHS that matches RHS exactly. So, the implementation turns out be
+          // just wrapping RHS anyway, although we are technically using
+          // different rules.
+          //rec(to=typeRenameVar(y, zOption.get, yType))
+          if (scope.contains(y)) ???
+          rec(scope + (y -> yType), to=yType)
 
 
         case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
@@ -1274,10 +1305,6 @@ object Dol {
           )
 
         case (AndType(left, right), _) =>
-          // TODO factor duplicate declarations first? i.e. AndType(FieldDef(a,A), FieldDef(a,B)) --> FieldDef(a, AndType(A,B)).
-          // Probably a bad idea in case of typeprojs...
-          // TODO this should be optimized somehow. The problem is if left
-          // contains projs from solveSet...
           orConstraint(
             rec(from=left),
             rec(from=right)
@@ -1288,7 +1315,11 @@ object Dol {
           rec(from=aUpperType, visitedLeft = visitedLeft+((aProj, to)))
 
         case (_, bProj @ TypeProj(y, b)) if !solveSet(bProj) =>
-          //pprint.pprintln((y,b))
+          // NOTE: Technically we can't just replace RHS with a subtype (lower
+          // bound). HOWEVER, if LHS is subtype of lower bound, then LHS can
+          // be replaces by RHS, and RHS==RHS by (Refl). So the implementation
+          // looks like a dual of the above rule (where the LHS=typeproj),
+          // while we are actually using different rules.
           val bLowerType = if (visitedRight((from, bProj))) Bot else typeProjectLower(scope, y, b).getOrElse{throw new TypecheckingError(s"no lower bound of $bProj")}
           // TODO eliminateRecursiveTypes?
           rec(to=bLowerType, visitedRight = visitedRight+((from, bProj)))
@@ -1304,6 +1335,10 @@ object Dol {
         case (Top, Top) => TrueConstraint
         case (Bot, Top) => TrueConstraint
         case (Bot, Bot) => TrueConstraint
+
+        case (RecType(x, xType), _) if zOption != None =>
+          rec(from=typeRenameVar(x, zOption.get, xType))
+
 
         case _ => FalseConstraint
       }
@@ -1381,7 +1416,7 @@ object Dol {
       case FunType(x, xType, xResType) =>
         FunType(x, simplify(xType), simplify(xResType))
       //case RecType(x, xType) =>
-      //  RecType(x, simplify(xType)) // TODO Is it okay to change the inside of a RecType?
+      //  RecType(x, simplify(xType)) // TODO Is it okay to change the inside of a RecType? NO.
       case _ => prototype
     }
 
@@ -1391,7 +1426,7 @@ object Dol {
     def raise(scope: Scope, r: Symbol, zOption: Option[Symbol], lowerType: Type, upperPrototype: Prototype): Option[Type] = {
       if (scope.contains(r))
         throw new TypecheckingError(s"var $r is already in use")
-      val cleanedPrototype = zOption.map{z => eliminateRecursiveTypes(upperPrototype, z)}.getOrElse(upperPrototype)
+      val cleanedPrototype = upperPrototype
       val (numQues, labeledPrototype) = prepMatch(r, simplify(cleanedPrototype))
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
       val solveSetVariance = gatherVariance(r, labeledPrototype, Covariant)
@@ -1410,6 +1445,7 @@ object Dol {
       // then the lowerbound of x.a may be a recursive type. In which case we
       // must wrap the lowerType in rectype to reach lowerbound and by
       // transitivity reach upperType.
+      // TODO using zOption=None for lower (but not raise) always, always seems to work!?!?
 
 
       if (scope.contains(r))
@@ -1431,10 +1467,10 @@ object Dol {
     /** Like lower(prototype, scope(z)), but does eliminateRecursiveTypes(_, z) first.
      */
     def varLower(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = {
-      lower(scope, r, Some(z), prototype, scope(z))
+      lower(scope, r, None, prototype, scope(z))
     }
 
-    /** Check if first <: second. RecTypes need to be rigidEquals.
+    /** Check if `first <: second`, but RecTypes need to be rigidEqualTypes.
      */
     def isSubtypeOf(scope: Scope, first: Type, second: Type, visitedLeft: Set[TypeProj] = Set(), visitedRight: Set[TypeProj] = Set()): Boolean = {
       if (scope.contains(-1)) ???
@@ -1481,7 +1517,6 @@ object Dol {
 //          case (FunType(x, xType, _), FunType(y, _, _)) if x != y =>
 //            // TODO Maybe better to create new var "w", and rename {x,y}->w?
 //            if (scope.contains(x) && !(isSubtypeOf(scope, scope(x), xType))) {
-//              pprint.pprintln((xType, scope(x)))
 //              ???
 //            }
 //            // TODO is isVarFreeInType(x, second)-check necessary?
@@ -1527,7 +1562,8 @@ object Dol {
 
     /** Check if first and second are exactly equal, except for renaming some bound vars.
      */
-    def rigidEqualTypes(first: Type, second: Type): Boolean = (first, second) match {
+    def rigidEqualTypes(first: Type, second: Type): Boolean = {
+      (first, second) match {
       case (Bot, Bot) => true
       case (Top, Top) => true
       case (AndType(l1, r1), AndType(l2, r2)) =>
@@ -1567,6 +1603,7 @@ object Dol {
       case (RecType(x, xType), RecType(y, yType)) if x == y =>
         rigidEqualTypes(xType, yType)
       case _ => false
+    }
     }
 
     // TODO rename to: isSubtypeOfAssumingNoRecTypes?

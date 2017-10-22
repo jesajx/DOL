@@ -56,5 +56,6 @@ object ScalaCheckUtils {
   def pretty[T](x: T): String = pprint.apply(x, width=pprintWidth, height=pprintHeight).render
 
   def prettyProp[A](f: A => Prop)(x: A): Prop =
-    prettyNamed("input", x) |: Prop.protect(f(x))
+    prettyNamed("input", x) |: Prop.protect(timeout(300.seconds){f(x)}) // TODO move timeout away
+
 }
