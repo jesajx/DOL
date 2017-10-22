@@ -11,9 +11,9 @@ object Main {
   def main(args: Array[String]): Unit = {
 //lowerdebug()
 //raisedebug()
-debugsub()
+//debugsub()
 //debugvarrename()
-//debuglub()
+debuglub()
 //debuglub3()
 //debugproj()
 }
@@ -1451,61 +1451,91 @@ val (GlobalContext(scope1, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Sym
 //  )
 //)
 
+//(
+//  GlobalContext(Map(), 13),
+//  1,
+//  0,
+//  RecType(
+//    2,
+//    AndType(
+//      TypeDecl(3, Bot, Bot),
+//      FieldDecl(
+//        4,
+//        RecType(
+//          5,
+//          AndType(
+//            TypeDecl(6, AndType(Bot, Bot), TypeProj(2, 3)),
+//            FieldDecl(
+//              7,
+//              FunType(
+//                8,
+//                TypeDecl(9, TypeProj(5, 6), TypeProj(5, 6)),
+//                FunType(10, TypeProj(5, 6), Top)
+//              )
+//            )
+//          )
+//        )
+//      )
+//    )
+//  ),
+//  AndType(
+//    RecType(
+//      2,
+//      AndType(
+//        TypeDecl(3, Bot, Bot),
+//        FieldDecl(
+//          4,
+//          RecType(
+//            5,
+//            AndType(
+//              TypeDecl(6, AndType(Bot, Bot), TypeProj(2, 3)),
+//              FieldDecl(
+//                7,
+//                FunType(
+//                  8,
+//                  TypeDecl(9, TypeProj(5, 6), TypeProj(5, 6)),
+//                  FunType(10, TypeProj(5, 6), Top)
+//                )
+//              )
+//            )
+//          )
+//        )
+//      )
+//    ),
+//    AndType(FieldDecl(11, Top), FieldDecl(12, Top))
+//  )
+//)
+
 (
-  GlobalContext(Map(), 13),
-  1,
+  GlobalContext(
+    Map(
+      10 -> TypeDecl(11, Top, Top),
+      1 -> AndType(AndType(AndType(Bot, Top), Bot), TypeProj(10, 11))
+    ),
+    12
+  ),
+  2,
   0,
+  //AndType(AndType(AndType(Bot, Top), Bot), TypeProj(10, 11)),
   RecType(
-    2,
+    3,
     AndType(
-      TypeDecl(3, Bot, Bot),
+      TypeDecl(4, Bot, Bot),
       FieldDecl(
-        4,
-        RecType(
-          5,
+        5,
+        FunType(
+          6,
           AndType(
-            TypeDecl(6, AndType(Bot, Bot), TypeProj(2, 3)),
-            FieldDecl(
-              7,
-              FunType(
-                8,
-                TypeDecl(9, TypeProj(5, 6), TypeProj(5, 6)),
-                FunType(10, TypeProj(5, 6), Top)
-              )
-            )
-          )
+            TypeDecl(7, Bot, Bot),
+            FieldDecl(8, TypeProj(3, 4))
+          ),
+          FieldDecl(9, Bot)
         )
       )
     )
   ),
-  AndType(
-    RecType(
-      2,
-      AndType(
-        TypeDecl(3, Bot, Bot),
-        FieldDecl(
-          4,
-          RecType(
-            5,
-            AndType(
-              TypeDecl(6, AndType(Bot, Bot), TypeProj(2, 3)),
-              FieldDecl(
-                7,
-                FunType(
-                  8,
-                  TypeDecl(9, TypeProj(5, 6), TypeProj(5, 6)),
-                  FunType(10, TypeProj(5, 6), Top)
-                )
-              )
-            )
-          )
-        )
-      )
-    ),
-    AndType(FieldDecl(11, Top), FieldDecl(12, Top))
-  )
+  AndType(Que, TypeProj(10, 11))
 )
-
 
 val scope = scope1 + (z -> a)
 
@@ -4411,41 +4441,47 @@ val (GlobalContext(scope, nextSymbol), z, a, b): (GlobalContext, Symbol, Type, T
 //)
 
 
-(
-  GlobalContext(
-    Map(
-      5 -> TypeDecl(6, Top, Top),
-      1 -> TypeDecl(
-        2,
-        AndType(
-          TypeDecl(
-            3,
-            AndType(Bot, FunType(7, TypeProj(5, 6), TypeDecl(8, Top, Top))),
-            TypeDecl(4, TypeProj(5, 6), TypeProj(5, 6))
-          ),
-          RecType(9, AndType(FieldDecl(10, Top), FieldDecl(11, Top)))
-        ),
-        TypeDecl(
-          3,
-          AndType(Bot, FunType(7, TypeProj(5, 6), TypeDecl(8, Top, Top))),
-          TypeDecl(4, TypeProj(5, 6), TypeProj(5, 6))
-        )
-      )
-    ),
-    12
-  ),
-  0,
-  AndType(
-    TypeDecl(
-      3,
-      AndType(Bot, FunType(7, TypeProj(5, 6), TypeDecl(8, Top, Top))),
-      TypeDecl(4, TypeProj(5, 6), TypeProj(5, 6))
-    ),
-    RecType(9, AndType( FieldDecl(10, Top), FieldDecl(11, Top)))
-  ),
-  TypeProj(1, 2)
-)
+//(
+//  GlobalContext(
+//    Map(
+//      5 -> TypeDecl(6, Top, Top),
+//      1 -> TypeDecl(
+//        2,
+//        AndType(
+//          TypeDecl(
+//            3,
+//            AndType(Bot, FunType(7, TypeProj(5, 6), TypeDecl(8, Top, Top))),
+//            TypeDecl(4, TypeProj(5, 6), TypeProj(5, 6))
+//          ),
+//          RecType(9, AndType(FieldDecl(10, Top), FieldDecl(11, Top)))
+//        ),
+//        TypeDecl(
+//          3,
+//          AndType(Bot, FunType(7, TypeProj(5, 6), TypeDecl(8, Top, Top))),
+//          TypeDecl(4, TypeProj(5, 6), TypeProj(5, 6))
+//        )
+//      )
+//    ),
+//    12
+//  ),
+//  0,
+//  AndType(
+//    TypeDecl(
+//      3,
+//      AndType(Bot, FunType(7, TypeProj(5, 6), TypeDecl(8, Top, Top))),
+//      TypeDecl(4, TypeProj(5, 6), TypeProj(5, 6))
+//    ),
+//    RecType(9, AndType( FieldDecl(10, Top), FieldDecl(11, Top)))
+//  ),
+//  TypeProj(1, 2)
+//)
 
+(
+  GlobalContext(Map(1 -> TypeDecl(2, Bot, Bot)), 5),
+  0,
+  TypeProj(1, 2),
+  RecType(3, FieldDecl(4, TypeProj(1, 2)))
+)
 
 def lub(left: Type, right: Type) = leastCommonSupertype(scope, left, right)
 def glb(left: Type, right: Type) = greatestCommonSubtype(scope, left, right)

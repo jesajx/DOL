@@ -1179,19 +1179,23 @@ object Dol {
         case (RecType(x, xType), RecType(y, yType)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
         case (RecType(x, xType), RecType(y, yType)) if x == y =>
+          // TODO wrong?
           if (rigidEqualTypes(from, to)) TrueConstraint else FalseConstraint
           //rec(scope = scope+(x -> xType), from=xType, to=yType) // TODO rigidEqualTypes? // TODO vs RigidVariance?
 
 
         case (AndType(left, right), RecType(y, yType)) =>
           if (scope.contains(y)) ???
-          orConstraint(
+          if (rec(scope + (y -> yType), to=yType) == TrueConstraint) // i.e. solveSet not in `from`.
+            TrueConstraint
+          else
             orConstraint(
               rec(from=left),
               rec(from=right)
-            ),
-            rec(scope + (y -> yType), to=yType))
+            )
 
+        case (proj: TypeProj, RecType(y, yType)) if zOption != None && solveSet(proj) =>
+          MultiAndConstraint(Map(proj -> (scope, Bot, to)))
 
         case (_, RecType(y, yType)) if zOption != None =>
           // NOTE: In DOT we can't unwrap RHS, and therefore we must use LHS
@@ -1202,7 +1206,10 @@ object Dol {
           // different rules.
           //rec(to=typeRenameVar(y, zOption.get, yType))
           if (scope.contains(y)) ???
-          rec(scope + (y -> yType), to=yType)
+          if (rec(scope + (y -> yType), to=yType) == TrueConstraint) // i.e. solveSet not in `from`.
+            TrueConstraint
+          else
+            FalseConstraint
 
 
         case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
