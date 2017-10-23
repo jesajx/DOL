@@ -727,7 +727,7 @@ object Dol {
       case _ => typ
     }
 
-    def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj] = Set()): Type = typ match {
+    def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj] = Set()): Type = typ match { // TODO wrong
       case aProj @ TypeProj(x, a) if x == z =>
         val aUpperType = typeProjectUpper(scope, x, a).getOrElse{error()}
         eliminateVarUp(scope, z, aUpperType, visited + aProj)
@@ -750,7 +750,7 @@ object Dol {
       case _ => typ // Bot, Top, Que, ErrorType
     }
 
-    def eliminateVarDown(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match {
+    def eliminateVarDown(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match { // TODO wrong.
         case aProj @ TypeProj(x, a) if x == z =>
           val aLowerType = typeProjectLower(scope, x, a).getOrElse{error()}
           eliminateVarDown(scope, z, aLowerType, visited + aProj)

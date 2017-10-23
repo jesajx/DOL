@@ -52,24 +52,19 @@ object DolGenerators {
   }
 
 
+  // TODO cyclic typedecls. x: TypeDecl(a, x.a, x.a), x: AndType(TypeDecl(a, x.b, x.b), TypeDecl(b, x.a, x.a))
 
-  // TODO reuse typemembers. maybe have a set of typemembers in globalscope,
-  // and generate like oneOf(existingMemberSymbols, newMember)
+  // TODO reuse typemember symbols. maybe have a set of typemembers in
+  // globalscope, and generate like oneOf(existingMemberSymbols, newMember)
 
 
-
-  // TODO should some of these be Cogen rather then Gen?
-
-  // TODO Do we need both genLowerPrototypeFromType and genUpperPrototypeFromType?
-
-  /** Punch holes (Que) in typ to get a prototype.
+  /** Punch holes (`Que`) in `typ` to get a prototype.
    */
   def genPrototypeFromType(ctx: GlobalContext, scope: Scope, typ: Type): Gen[(GlobalContext, Prototype)] =
     oneOf(
       const((ctx, Que)),
       typ match {
-        // TODO obj-types probably need special handling...
-        //case RecType(x, xType, resType) => TODO Prototypes inside rec? Can these happen in practice?
+        // NOTE: RecTypes may not contain Prototypes. // TODO Or could they?
         case FieldDecl(a, aType) =>
           for {
             (ctx2, aPrototype) <- genPrototypeFromType(ctx, scope, aType)
@@ -101,16 +96,18 @@ object DolGenerators {
       }
     )
 
-  def genSupertype(ctx: GlobalContext, scope: Scope, subtype: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
+  /** Generate a supertype of `typ`.
+   */
+  def genSupertype(ctx: GlobalContext, scope: Scope, typ: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
     if (size == 0)
       Gen.fail
     else if (size == 1) {
-      if (subtype.totNumNodes < 1)
+      if (typ.totNumNodes < 1)
         const((ctx, Top))
       else
-        oneOf(const((ctx, subtype)), const((ctx, Top)))
+        oneOf(const((ctx, typ)), const((ctx, Top)))
     } else {
-      val extra: Seq[Gen[(GlobalContext, Type)]] = subtype match { // TODO!!!
+      val extra: Seq[Gen[(GlobalContext, Type)]] = typ match { // TODO!!!
         case FunType(x, xType, resType) if (size >= 3) =>
           Seq(for {
             (argSize, resSize)   <- splitSizeNonZero(size - 1)
@@ -153,22 +150,24 @@ object DolGenerators {
       }
       // TODO and(self, super(self))? and(super(self), super(self))?
 
-      oneOf(const((ctx, subtype)), const((ctx, Top)), extra.toSeq: _*)
+      oneOf(const((ctx, typ)), const((ctx, Top)), extra.toSeq: _*)
     }
   }
 
-  def genSubtype(ctx: GlobalContext, scope: Scope, supertype: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
+  /** Generate a subtype of `typ`.
+   */
+  def genSubtype(ctx: GlobalContext, scope: Scope, typ: Type, visited: Set[TypeProj] = Set()): Gen[(GlobalContext, Type)] = Gen.sized { size => // TODO Gen[(Scope,Type)]?
     if (size <= 0)
       Gen.fail
     else {
-      val extra: Option[Gen[(GlobalContext, Type)]] = supertype match {
+      val extra: Option[Gen[(GlobalContext, Type)]] = typ match {
         case FunType(x, xType, resType) if (size >= 3) =>
           None // TODO
           //Some(for {
           //  (argSize, resSize) <- splitSizeNonZero(size - 1)
           //  // TODO is this correct or is it necessary to do a
-          //  // varEliminatingTransform or similar? Yes, it leads to
-          //  problems. e.g. Fun(x, TypeDecl(a,A,B), x.a) being replaced by Fun(x, Top, x.a)
+          //  // varEliminatingTransform or similar?
+          //  // TODO YES: it leads to problems. e.g. Fun(x, TypeDecl(a,A,B), x.a) being replaced by Fun(x, Top, x.a)
           //  (ctx2, xSupertype) <- Gen.resize(argSize, genSupertype(ctx, scope, xType, visited))
           //  (ctx3, resSubtype) <- Gen.resize(resSize, genSubtype(ctx2, scope + (x -> xSupertype), resType, visited))
           //} yield (ctx3, FunType(x, xSupertype, resSubtype)))
@@ -197,7 +196,7 @@ object DolGenerators {
         if (size >= 3)
           Some(for {
             (leftSize, rightSize) <- splitSizeNonZero(size - 1)
-            (ctx2, sub)      <- Gen.resize(leftSize, genSubtype(ctx, scope, supertype)) // NOTE: Since size decreases will not inf rec.
+            (ctx2, sub)      <- Gen.resize(leftSize, genSubtype(ctx, scope, typ)) // NOTE: Since size decreases will not inf rec.
             (ctx3, nonsense) <- Gen.resize(rightSize, genType(ctx2, scope))
             Seq(left, right) <- Gen.pick(2, Seq(sub, nonsense))
           } yield (ctx3, AndType(left, right)))
@@ -205,12 +204,12 @@ object DolGenerators {
           None
 
       val hideBehindTypeProj =
-        if (size >= 4 && NoFuture.allFreeVarsInType(supertype).intersect(scope.keySet).isEmpty)
+        if (size >= 4 && NoFuture.allFreeVarsInType(typ).intersect(scope.keySet).isEmpty)
           Seq(for {
             (lowerSize, upperSize) <- splitSizeNonZero(size - 2)
             (ctx2, x) <- ctx.newSymbol()
             (ctx3, a) <- ctx2.newSymbol()
-            (ctx4, upperType) <- Gen.resize(upperSize, genSubtype(ctx3, Map(), supertype))
+            (ctx4, upperType) <- Gen.resize(upperSize, genSubtype(ctx3, Map(), typ))
             (ctx5, lowerType) <- Gen.resize(lowerSize, genSubtype(ctx4, Map(), upperType))
             ctx6 <- ctx5.withBinding(x -> TypeDecl(a, lowerType, upperType))
           } yield (ctx6, TypeProj(x, a)))
@@ -218,8 +217,8 @@ object DolGenerators {
           Seq()
 
       val noChange =
-        if (supertype.totNumNodes <= size)
-          Seq(const((ctx, supertype)))
+        if (typ.totNumNodes <= size)
+          Seq(const((ctx, typ)))
         else
           Seq()
 
@@ -238,6 +237,8 @@ object DolGenerators {
         case a => TypeProj(x, a)
       }
     }.toSet.toSeq
+
+    // TODO generate subtype of typedecl and then reference the subtype?
 
     val justMakeSomethingUp: Gen[(GlobalContext, TypeProj)] = for { // TODO sized...
       (ctx2, x) <- ctx.newSymbol()
@@ -281,12 +282,14 @@ object DolGenerators {
     } yield (ctx4, TypeDecl(a, aLowerType, aUpperType))
   }
 
-  // TODO genComplexAccTypeDecls where decls can see themselves too.
+  // TODO genComplexAccTypeDecls where decls can see themselves too. Cyclic
+  // typedecls.
 
-  // Generate an intersection of TypeDecls recursive on z.
-  //
-  // The decls are generated in such a way that each decl can "see" the decls
-  // before it. The final scope contains z with the intersection of all decls.
+  /** Generate an intersection of TypeDecls recursive on z.
+   *
+   * The decls are generated in such a way that each decl can "see" the decls
+   * before it. The final scope contains z with the intersection of all decls.
+   */
   def genSimpleAccTypeDecls(ctx: GlobalContext, scope: Scope, z: Symbol): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
 
     def updatedType(scope: Scope, typ: Type) = scope.get(z) match {
@@ -313,6 +316,7 @@ object DolGenerators {
     else
       Gen.fail
   }
+
 
   def scopePush(scope: Scope, x: Symbol, anotherXType: Type): Scope = scope.get(x) match {
     case Some(oldXType) => scope + (x -> AndType(oldXType, anotherXType))
@@ -444,12 +448,9 @@ object DolGenerators {
     else if (size == 2)
       oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope), genUselessRecType(ctx, scope))
     else
-      oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope), genUselessRecType(ctx, scope), genFunType(ctx, scope), genRecType(ctx, scope))
+      oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope), genUselessRecType(ctx, scope), genFunType(ctx, scope), genRecType(ctx, scope), genAndType(ctx, scope, genType, 1))
     // TODO genNonRecursiveObject
   }
-
-
-
 
 
 
@@ -656,6 +657,5 @@ object DolGenerators {
     genAppInferenceProblem(ctx, scope),
     genObjInferenceProblem(ctx, scope)
   )
-
 
 }
