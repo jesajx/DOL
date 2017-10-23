@@ -19,6 +19,9 @@ import ScalaCheckUtils._
 object DolGenerators {
   // (su, prototype) -> (term, scope, typedterm)
 
+  // TODO reuse symbols for bound vars
+
+
   // TODO INV: globalScope.keys.intersect(scope.keys) == Set()
   sealed case class GlobalContext(globalScope: Scope = Map(), nextSymbol: Int = 0) {
     def withBinding(binding: (Symbol, Type)): Gen[GlobalContext] =
@@ -417,6 +420,14 @@ object DolGenerators {
       )
   }
 
+  def genUselessRecType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized { size =>
+    if (size < 2)
+      Gen.fail
+    else for {
+      (ctx2, x)   <- ctx.newSymbol()
+      (ctx3, typ) <- Gen.resize(size - 1, genType(ctx2, scope))
+    } yield (ctx3, RecType(x, typ))
+  }
 
   // TODO genTypeWithoutScope and genType
 
@@ -428,12 +439,12 @@ object DolGenerators {
   def genType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized { size =>
     if (size <= 0)
       Gen.fail
-    else if (size <= 1)
+    else if (size == 1)
       oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope))
-    else if (size <= 2)
-      oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope))
+    else if (size == 2)
+      oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope), genUselessRecType(ctx, scope))
     else
-      oneOf(const((ctx, Top)), const((ctx, Bot)), genFunType(ctx, scope), genTypeProj(ctx, scope), genRecType(ctx, scope), genNonRecObjType(ctx, scope))
+      oneOf(const((ctx, Top)), const((ctx, Bot)), genTypeProj(ctx, scope), genNonRecObjType(ctx, scope), genUselessRecType(ctx, scope), genFunType(ctx, scope), genRecType(ctx, scope))
     // TODO genNonRecursiveObject
   }
 

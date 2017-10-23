@@ -27,7 +27,7 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
   }
 
   //includeMatching(DolTypecheckingSpec, ".*")
-  includeMatching(DolUtilSpec, ".*varRaise.*")
+  //includeMatching(DolUtilSpec, ".*varRaise.*")
   //includeMatching(DolUtilSpec, ".*varLower.*")
   //includeMatching(DolUtilSpec, ".*varIsSubtypeOf.*")
   //includeMatching(DolUtilSpec, ".*leastCommonSupertype.*")

@@ -51,16 +51,11 @@ object Dol {
   //
 
 
-
-
-
-
   // TODO Idea: Maybe treat entire typechecker as a constraint-solver and
   // typecheck in two steps: 1) gatherConstraints constraints, 2) solve them. This is
   // similar what I tried with Hindley-Milner. Technically this is actually
   // what is happening in the current implementation (gatherConstraints and solve are
-  // done concurrently), but it could be beneficial to make it more explicit
-  // (simpler and more machine-like code).
+  // done concurrently), but it could be beneficial to make it more explicit.
 
 
   sealed trait Tree {
@@ -88,9 +83,6 @@ object Dol {
   }
   sealed trait Type  extends Tree {
     type ThisType <: Type
-  }
-  sealed trait Decl  extends Type {
-    type ThisType <: Decl
   }
   sealed trait Def   extends Expr {
     type ThisType <: Def
@@ -264,7 +256,7 @@ object Dol {
   //case class SubtypeConstraint(scope: Scope, left: Type, right: Type, variance: Variance) extends Constraint // TODO add Variance here?
   case class AndConstraint(left: Constraint, right: Constraint) extends Constraint
   type ConstraintMap = Map[TypeProj, (Scope, Type, Type)]
-  case class MultiAndConstraint(constraints: ConstraintMap) extends Constraint
+  case class MultiAndConstraint(constraints: ConstraintMap) extends Constraint // TODO replace with SubtypeConstraint?
 
 
 
@@ -1182,109 +1174,46 @@ object Dol {
       }
 
       // TODO instead of storing scope in everyconstraint, just make sure
-      // bound vars are unique and share a map for all local scopes.
-
-      // TODO replace variance in rec by Contravariant="widen" and Covariante="tighten"?
+      // bound vars are unique and share a map for all local scopes?
 
       (from, to) match {
-        case (RecType(x, xType), Top) => TrueConstraint // TODO hack
-
-        // :::RHS is RecType:::
+        case (Bot, _) => TrueConstraint // Even if RHS is a prototype unwrapping RHS here would not constrain it.
+        case (_, Top) => TrueConstraint
 
         case (RecType(x, xType), RecType(y, yType)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
 
-        case (RecType(x, xType), RecType(y, yType)) if x == y =>
-          // TODO wrong?
+        case (RecType(x, xType), RecType(y, yType)) if x == y && zOption == None =>
           if (rigidEqualTypes(from, to)) TrueConstraint else FalseConstraint
-          //rec(scope = scope+(x -> xType), from=xType, to=yType) // TODO rigidEqualTypes? // TODO vs RigidVariance?
 
-        case (proj: TypeProj, RecType(y, yType)) if zOption != None && solveSet(proj) =>
-          MultiAndConstraint(Map(proj -> (scope, Bot, to)))
+        case (RecType(x, xType), RecType(y, yType)) if x == y && zOption != None =>
+          // NOTE: We need to be careful of renaming TypeProj in xType that
+          // reference "x" (i.e. "y"). That is:
+          // TypeProj(y, a) == TypeProj(y, a)
+          // but
+          // TypeProj(z, a) != TypeProj(y, a).
+          rec(scope = scope + (y -> yType), from=xType, to=yType) // TODO Is this just waiting to explode? // TODO check for solveSet?
 
-        case (Bot, RecType(y, yType)) => TrueConstraint // TODO hack
 
         case (AndType(left, right), RecType(y, yType)) =>
-          if (scope.contains(y)) ???
-          if (rec(scope + (y -> yType), to=yType) == TrueConstraint) // i.e. solveSet not in `from`.
-            TrueConstraint
-          else
+          if (scope.contains(y)) ??? // TODO may need SymbolUniverse after all...
+          orConstraint(
+            rec(scope + (y -> yType), to=yType),
             orConstraint(
               rec(from=left),
               rec(from=right)
-            )
+            ))
 
-        case (aProj @ TypeProj(x, a), RecType(y, yType)) if zOption != None =>
+        case (aProj @ TypeProj(x, a), RecType(y, yType)) if !solveSet(aProj) =>
           val aUpperType = if (visitedLeft((aProj, to))) Top else typeProjectUpper(scope, x, a).getOrElse{throw new TypecheckingError(s"no upper bound of $aProj")}
-          if (scope.contains(y)) ???
+          if (scope.contains(y)) ??? // TODO
           orConstraint(
             rec(from=aUpperType, visitedLeft = visitedLeft+((aProj, to))),
-            rec(scope + (y -> yType), to=yType)) // TODO check if `from` contains solveSet?
+            rec(scope + (y -> yType), to=yType)) // TODO check for solveSet in `to`?
 
-        case (_, RecType(y, yType)) if zOption != None => // LHS in {Top | FunType | FieldDecl | TypeDecl}
-          // NOTE: In DOT we can't unwrap RHS, and therefore we must use LHS
-          // == RHS. HOWEVER, if zOption != None, we have the freedom to
-          // change LHS before we do the comparison, i.e. find a supertype of
-          // LHS that matches RHS exactly. So, the implementation turns out be
-          // just wrapping RHS anyway, although we are technically using
-          // different rules.
-          //rec(to=typeRenameVar(y, zOption.get, yType))
-          if (scope.contains(y)) ???
-          if (rec(scope + (y -> yType), to=yType) == TrueConstraint) // i.e. solveSet not in `from`.
-            TrueConstraint
-          else // one of: OrConstraint, AndConstraint, etc.
-            FalseConstraint
-
-
-        case (FieldDecl(a, aType), Top) => rec(to=FieldDecl(a, Top)) // TODO TrueConstraint? still necessary to decide on variance?
-        case (Bot, FieldDecl(a, aType)) => rec(from=FieldDecl(a, Bot))
-
-
-
-        case (TypeDecl(a, aLowerType, aUpperType), Top) =>
-          rec(to=TypeDecl(a, Bot, Top))
-
-        case (Bot, TypeDecl(a, aLowerType, aUpperType)) => // TODO What IS THE smallest TypeDecl? TypeDecl(a, x.a, x.a)?
-          //rec(from=TypeDecl(a, Top, Bot)) // TODO Probably works assuming aLowerType <: aUpperType, or exactly one of them is a prototype!?!?
-          // TODO match variance{...}?
-
-          // TODO aLowerType <: smallest(aUpperType)
-          // TODO largest(aLowerType) <: aUpperType
-
-          val lowerSolveSet = typeDfsSet[TypeProj](aLowerType){
-            case proj: TypeProj if solveSet(proj) => Set(proj)
-            case _ => Set()
-          }
-          val upperSolveSet = typeDfsSet[TypeProj](aUpperType){
-            case proj: TypeProj if solveSet(proj) => Set(proj)
-            case _ => Set()
-          }
-          if (lowerSolveSet.isEmpty && upperSolveSet.isEmpty) // TODO evil hack.
-            TrueConstraint
-          else if (lowerSolveSet.isEmpty) {
-            andConstraint(
-              rec(from=aLowerType, to=aUpperType, zOption=None), // TODO this messes with visitedSets...
-              andConstraint(
-                rec(from=Bot, to=aLowerType, zOption=None),
-                rec(from=aUpperType, to=Top, zOption=None)))
-          }
-          else if (upperSolveSet.isEmpty)
-            andConstraint(
-              rec(from=aLowerType, to=aUpperType, zOption=None),
-              andConstraint(
-                rec(from=Bot, to=aLowerType, zOption=None),
-                rec(from=aUpperType, to=Top, zOption=None)))
-          else // TODO just FalseConstraint?
-            FalseConstraint
-            //andConstraint(
-            //  rec(from=aLowerType, to=aUpperType, variance=Invariant, zOption=None), // TODO
-            //  andConstraint(
-            //    rec(from=Bot, to=aLowerType, variance=reverseVariance(variance), zOption=None),
-            //    rec(from=aUpperType, to=Top, variance=variance, zOption=None)))
-
-
-        case (FunType(x, _, _), Top) => rec(to=FunType(x, Bot, Top))
-        case (Bot, FunType(x, _, _)) => rec(from=FunType(x, Top, Bot))
+        case (Top | _: FunType | _: FieldDecl | _: TypeDecl, RecType(y, yType)) if zOption != None =>
+          if (scope.contains(y)) ??? // TODO
+          rec(scope + (y -> yType), to=yType) // TODO check for solveSet in `to`?
 
         case (FunType(x, _, _), FunType(y, _, _)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
@@ -1293,23 +1222,22 @@ object Dol {
           // TODO is it fine to just add yType to scope here? Do we need to
           // remove and solveSet-projs from it?
           andConstraint(
-            rec(from=yType, to=xType, zOption=None),
+            rec(from=yType, to=xType, zOption=None),  // TODO Extension to DOT: zOption = Some(x)?
             rec(scope = scope+(x -> yType), from=xResType, to=yResType, zOption=None))
 
-        //case (AndType(ll, lr), AndType(rl, rr)) =>
-        //  orConstraint(
-        //    andConstraint(rec(to=rl), rec(to=rr)),
-        //    orConstraint(
-        //      rec(from=ll),
-        //      rec(from=lr)))
+        case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
+          rec(from=aType, to=bType, zOption=None)
 
-        case (_, AndType(left, right)) =>
-          andConstraint(rec(to=left), rec(to=right))
+        case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
+          andConstraint(
+            rec(from=bLowerType, to=aLowerType, zOption=None),
+            rec(from=aUpperType, to=bUpperType, zOption=None))
 
-        case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b))  =>
-          if (aProj == bProj) {
+        case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) =>
+          if (aProj == bProj) { // NOTE: Even for solveSet.
             TrueConstraint
           } else if (solveSet(aProj) && solveSet(bProj)) {
+            ??? // TODO Can this actually happen?
             FalseConstraint
           } else if (solveSet(aProj) && !solveSet(bProj)) {
             MultiAndConstraint(Map(aProj -> (scope, Bot, to)))
@@ -1324,14 +1252,6 @@ object Dol {
               rec(to=bLowerType, visitedRight = visitedRight+((aProj, bProj))))
           }
 
-        case (aProj @ TypeProj(x, a), _) if solveSet(aProj) =>
-          val bLower = smallest(to) // TODO get rid of all type-projections?
-          MultiAndConstraint(Map(aProj -> (scope, Bot, bLower)))
-
-        case (_, bProj @ TypeProj(y, b)) if solveSet(bProj) =>
-          val aUpperType = largest(from) // TODO get rid of all type-projections?
-          MultiAndConstraint(Map(bProj -> (scope, aUpperType, Top)))
-
         case (AndType(left, right), bProj @ TypeProj(y, b)) if !solveSet(bProj) =>  // TODO similar for the (_, AndType)-case above?
           val bLowerType = if (visitedRight((from, bProj))) Bot else typeProjectLower(scope, y, b).getOrElse{error()}
           orConstraint(
@@ -1342,39 +1262,42 @@ object Dol {
             )
           )
 
-        case (AndType(left, right), _) =>
+        case (RecType(x, xType), bProj @ TypeProj(y, b)) if !solveSet(bProj) && zOption != None =>
+          val bLowerType = if (visitedRight((from, bProj))) Bot else typeProjectLower(scope, y, b).getOrElse{throw new TypecheckingError(s"no lower bound of $bProj")}
+          orConstraint(
+            rec(from=typeRenameVar(x, zOption.get, xType)),
+            rec(to=bLowerType, visitedRight = visitedRight+((from, bProj))))
+
+        case (aProj @ TypeProj(x, a), Bot | _: FunType | _: RecType | _: FieldDecl | _: TypeDecl | _: AndType) if solveSet(aProj) =>
+          MultiAndConstraint(Map(aProj -> (scope, Bot, smallest(to))))
+
+        case (Top | _: FunType | _: RecType | _: FieldDecl | _: TypeDecl | _: AndType | _: TypeProj, AndType(left, right)) =>
+          andConstraint(rec(to=left), rec(to=right))
+
+        case (Top | _: FunType | _: RecType | _: FieldDecl | _: TypeDecl | _: AndType, bProj @ TypeProj(y, b)) if solveSet(bProj) =>
+          MultiAndConstraint(Map(bProj -> (scope, largest(from), Top)))
+
+        case (AndType(left, right), Bot | _: FieldDecl | _: TypeDecl | _: FunType) =>
           orConstraint(
             rec(from=left),
             rec(from=right)
           )
 
-        case (aProj @ TypeProj(x, a), _) if !solveSet(aProj) =>
+        case (aProj @ TypeProj(x, a), Bot | _: FieldDecl | _: TypeDecl | _: FunType) if !solveSet(aProj) =>
           val aUpperType = if (visitedLeft((aProj, to))) Top else typeProjectUpper(scope, x, a).getOrElse{throw new TypecheckingError(s"no upper bound of $aProj")}
           rec(from=aUpperType, visitedLeft = visitedLeft+((aProj, to)))
 
-        case (_, bProj @ TypeProj(y, b)) if !solveSet(bProj) =>
+
+        case (Top | _: FieldDecl | _: TypeDecl | _: FunType | _: RecType, bProj @ TypeProj(y, b)) if !solveSet(bProj) =>
           // NOTE: Technically we can't just replace RHS with a subtype (lower
           // bound). HOWEVER, if LHS is subtype of lower bound, then LHS can
           // be replaces by RHS, and RHS==RHS by (Refl). So the implementation
           // looks like a dual of the above rule (where the LHS=typeproj),
           // while we are actually using different rules.
           val bLowerType = if (visitedRight((from, bProj))) Bot else typeProjectLower(scope, y, b).getOrElse{throw new TypecheckingError(s"no lower bound of $bProj")}
-          // TODO eliminateRecursiveTypes?
           rec(to=bLowerType, visitedRight = visitedRight+((from, bProj)))
 
-        case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
-          rec(from=aType, to=bType, zOption=None)
-
-        case (TypeDecl(a, aLowerType, aUpperType), TypeDecl(b, bLowerType, bUpperType)) if a == b =>
-          andConstraint(
-            rec(from=bLowerType, to=aLowerType, zOption=None),
-            rec(from=aUpperType, to=bUpperType, zOption=None))
-
-        case (Top, Top) => TrueConstraint
-        case (Bot, Top) => TrueConstraint
-        case (Bot, Bot) => TrueConstraint
-
-        case (RecType(x, xType), _) if zOption != None =>
+        case (RecType(x, xType), Bot | _: FieldDecl | _: TypeDecl | _: FunType | _: RecType | _: TypeProj) if zOption != None =>
           rec(from=typeRenameVar(x, zOption.get, xType))
 
 
