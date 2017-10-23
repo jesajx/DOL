@@ -9,11 +9,11 @@ object Main {
   import NoFuture._
 
   def main(args: Array[String]): Unit = {
-lowerdebug()
+//lowerdebug()
 //raisedebug()
 //debugsub()
 //debugvarrename()
-//debuglub()
+debuglub()
 //debuglub3()
 //debuglubmin()
 //debugproj()
@@ -6097,10 +6097,107 @@ val (GlobalContext(scope, nextSymbol), z, a, b): (GlobalContext, Symbol, Type, T
 //  RecType(3, FieldDecl(4, TypeProj(1, 2)))
 //)
 
-(
-  GlobalContext(Map(1 -> TypeDecl(2, Top, Top)), 5),
+//(
+//  GlobalContext(Map(1 -> TypeDecl(2, Top, Top)), 5),
+//  0,
+//  RecType(3, RecType(4, Top)),
+//  TypeProj(1, 2)
+//)
+
+( // TODO need symboluniverse...
+  GlobalContext(
+    Map(
+      8 -> TypeDecl(9, Bot, Bot),
+      18 -> TypeDecl(19, Bot, RecType(20, TypeProj(8, 9))),
+      3 -> TypeDecl(
+        4,
+        RecType(
+          5,
+          AndType(
+            TypeDecl(
+              6,
+              AndType(
+                AndType(
+                  TypeProj(8, 9),
+                  RecType(
+                    10,
+                    AndType(
+                      FieldDecl(11, Top),
+                      TypeDecl(12, Bot, Bot)
+                    )
+                  )
+                ),
+                Bot
+              ),
+              FunType(7, Bot, Bot)
+            ),
+            AndType(
+              AndType(
+                AndType(
+                  FieldDecl(13, RecType(14, Top)),
+                  FieldDecl(15, Bot)
+                ),
+                AndType(
+                  TypeDecl(16, Bot, Bot),
+                  AndType(
+                    FieldDecl(17, TypeProj(18, 19)),
+                    FieldDecl(21, Bot)
+                  )
+                )
+              ),
+              FieldDecl(22, TypeProj(18, 19))
+            )
+          )
+        ),
+        RecType(
+          5,
+          AndType(
+            TypeDecl(
+              6,
+              AndType(
+                AndType(
+                  TypeProj(8, 9),
+                  RecType(
+                    10,
+                    AndType(
+                      FieldDecl(11, Top),
+                      TypeDecl(12, Bot, Bot)
+                    )
+                  )
+                ),
+                Bot
+              ),
+              FunType(7, Bot, Bot)
+            ),
+            AndType(
+              AndType(
+                AndType(
+                  FieldDecl(13, RecType(14, Top)),
+                  FieldDecl(15, Bot)
+                ),
+                AndType(
+                  TypeDecl(16, Bot, Bot),
+                  AndType(
+                    FieldDecl(17, TypeProj(18, 19)),
+                    FieldDecl(21, Bot)
+                  )
+                )
+              ),
+              FieldDecl(22, TypeProj(18, 19))
+            )
+          )
+        )
+      ),
+      1 -> TypeDecl(
+        2,
+        AndType(TypeProj(3, 4), RecType(23, TypeProj(3, 4))),
+        TypeProj(3, 4)
+      )
+    ),
+    24
+  ),
   0,
-  RecType(3, RecType(4, Top)),
+  TypeProj(1, 2),
   TypeProj(1, 2)
 )
 
@@ -6123,6 +6220,9 @@ P.namedln("lub(a, glb(a, b))", lubRes)
 
 val glbRes = glb(a, lub_ab)
 P.namedln("glb(lub(a, b), a)", glbRes)
+
+P.namedln("glb(a, b) == a", varEqualTypes(scope + (z -> glb_ab), z, a))
+P.namedln("glb(a, b) == b", varEqualTypes(scope + (z -> glb_ab), z, b))
 
 P.namedln("lub(a, b) == b", varEqualTypes(scope + (z -> lub_ab), z, b))
 P.namedln("lub(a, b) == lub(b, a)", varEqualTypes(scope + (z -> lub_ab), z, lub_ba))

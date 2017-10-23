@@ -14,7 +14,8 @@ import org.scalacheck.Gen.someOf
 import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
 
-import scala.concurrent.ExecutionContext.Implicits.global
+import java.util.concurrent.ForkJoinPool
+import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.Await
 import scala.util.Try
@@ -30,8 +31,15 @@ object ScalaCheckUtils {
     } yield (left, size - left)
   }
 
-  def timeout[T](timeout: Duration)(f: => T): T =
-    Await.result(Future{Try{f}}, timeout).get
+  def timeout[T](timeout: Duration)(f: => T): T = {
+    val pool = new ForkJoinPool(1)
+    implicit val ec: ExecutionContext = ExecutionContext.fromExecutor(pool)
+    try {
+      Await.result(Future{Try{f}}, timeout).get
+    } finally {
+      pool.shutdown()
+    }
+  }
 
   // TODO Maybe make a wrapper around Gen to keep track of "minsize"?
   // Alternatively: don't write so many generators....

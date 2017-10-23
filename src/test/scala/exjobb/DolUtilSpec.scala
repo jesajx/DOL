@@ -15,6 +15,7 @@ import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
 import scala.concurrent.duration._
 
+import scala.concurrent.ExecutionContext
 import DolGenerators._
 import ScalaCheckUtils._
 import DumbGenerators._

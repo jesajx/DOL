@@ -10,9 +10,7 @@ lazy val dol = (project in file(".")).
     libraryDependencies += "org.scalacheck" %% "scalacheck" % "1.13.4" % "test",
     libraryDependencies += "com.lihaoyi" %% "pprint" % "0.5.3",
     testOptions in Test += Tests.Argument(TestFrameworks.ScalaCheck, "-verbosity", "2"), // To print stacktraces in tests.
-    scalacOptions := Seq("-unchecked", "-deprecation"),
-    parallelExecution in Test := false
+    scalacOptions := Seq("-unchecked", "-deprecation")
+    //parallelExecution in Test := false
   ).
   dependsOn(reactiveAsync)
-
-
