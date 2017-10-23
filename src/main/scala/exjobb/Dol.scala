@@ -446,12 +446,23 @@ object Dol {
           case (ErrorType, _) | (_, ErrorType) => ErrorType
           case (_: RecType, _: RecType) if (rigidEqualTypes(lhs, rhs)) => lhs
 
+          case (AndType(ll, lr), AndType(rl, rr)) =>
+            andType(
+              andType(
+                inner(scope, ll, rhs, visitedLeft, visitedRight),
+                inner(scope, lr, rhs, visitedLeft, visitedRight)),
+              andType(
+                inner(scope, lhs, rl, visitedLeft, visitedRight),
+                inner(scope, lhs, rr, visitedLeft, visitedRight)))
+
           case (AndType(left, right), _) =>
             andType(
               inner(scope, left, rhs, visitedLeft, visitedRight),
               inner(scope, right, rhs, visitedLeft, visitedRight))
-          case (_, AndType(_, _)) =>
-            inner(scope, rhs, lhs, visitedLeft, visitedRight)
+          case (_, AndType(left, right)) =>
+            andType(
+              inner(scope, lhs, left, visitedLeft, visitedRight),
+              inner(scope, lhs, right, visitedLeft, visitedRight))
 
           case (TypeProj(x, a), TypeProj(y, b)) if lhs == rhs => lhs
           case (aProj @ TypeProj(x, a), bProj @ TypeProj(y, b)) if lhs != rhs =>
@@ -571,6 +582,9 @@ object Dol {
           val leftSubRight = (None != raise(scope, r, zOption, leftType, rightType))
           val rightSubLeft = (None != raise(scope, r, zOption, rightType, leftType))
 
+          //pprint.pprintln((leftType, rightType), width=78, height=40000000)
+          //pprint.pprintln((leftSubRight, rightSubLeft))
+
           variance match {
             case Covariant =>
               if (leftSubRight)
@@ -579,7 +593,6 @@ object Dol {
                 right
               else {
                 Solution(greatestCommonSubtype(scope, leftType, rightType)) // TODO wrong?
-                //???
                 //Inconsistent
               }
             case Contravariant =>
@@ -587,14 +600,15 @@ object Dol {
                 right
               else if (rightSubLeft)
                 left
-              else
+              else {
                 Solution(leastCommonSupertype(scope, leftType, rightType)) // TODO wrong?
                 //Inconsistent
-            case Invariant =>
-              if (leftSubRight && rightSubLeft)
-                left
-              else
-                Inconsistent
+              }
+            //case Invariant =>
+            //  if (leftSubRight && rightSubLeft)
+            //    left
+            //  else
+            //    Inconsistent
             case _ => ???
           }
         case (Solution(leftType), _)  => Solution(leftType)
@@ -1174,15 +1188,21 @@ object Dol {
 
       (from, to) match {
         case (RecType(x, xType), Top) => TrueConstraint // TODO hack
-        case (Bot, RecType(y, yType)) => TrueConstraint // TODO hack
+
+        // :::RHS is RecType:::
 
         case (RecType(x, xType), RecType(y, yType)) if x != y =>
           rec(to=typeRenameBoundVarAssumingNonFree(x, to))
+
         case (RecType(x, xType), RecType(y, yType)) if x == y =>
           // TODO wrong?
           if (rigidEqualTypes(from, to)) TrueConstraint else FalseConstraint
           //rec(scope = scope+(x -> xType), from=xType, to=yType) // TODO rigidEqualTypes? // TODO vs RigidVariance?
 
+        case (proj: TypeProj, RecType(y, yType)) if zOption != None && solveSet(proj) =>
+          MultiAndConstraint(Map(proj -> (scope, Bot, to)))
+
+        case (Bot, RecType(y, yType)) => TrueConstraint // TODO hack
 
         case (AndType(left, right), RecType(y, yType)) =>
           if (scope.contains(y)) ???
@@ -1194,10 +1214,14 @@ object Dol {
               rec(from=right)
             )
 
-        case (proj: TypeProj, RecType(y, yType)) if zOption != None && solveSet(proj) =>
-          MultiAndConstraint(Map(proj -> (scope, Bot, to)))
+        case (aProj @ TypeProj(x, a), RecType(y, yType)) if zOption != None =>
+          val aUpperType = if (visitedLeft((aProj, to))) Top else typeProjectUpper(scope, x, a).getOrElse{throw new TypecheckingError(s"no upper bound of $aProj")}
+          if (scope.contains(y)) ???
+          orConstraint(
+            rec(from=aUpperType, visitedLeft = visitedLeft+((aProj, to))),
+            rec(scope + (y -> yType), to=yType)) // TODO check if `from` contains solveSet?
 
-        case (_, RecType(y, yType)) if zOption != None =>
+        case (_, RecType(y, yType)) if zOption != None => // LHS in {Top | FunType | FieldDecl | TypeDecl}
           // NOTE: In DOT we can't unwrap RHS, and therefore we must use LHS
           // == RHS. HOWEVER, if zOption != None, we have the freedom to
           // change LHS before we do the comparison, i.e. find a supertype of
@@ -1208,7 +1232,7 @@ object Dol {
           if (scope.contains(y)) ???
           if (rec(scope + (y -> yType), to=yType) == TrueConstraint) // i.e. solveSet not in `from`.
             TrueConstraint
-          else
+          else // one of: OrConstraint, AndConstraint, etc.
             FalseConstraint
 
 
@@ -1271,6 +1295,13 @@ object Dol {
           andConstraint(
             rec(from=yType, to=xType, zOption=None),
             rec(scope = scope+(x -> yType), from=xResType, to=yResType, zOption=None))
+
+        //case (AndType(ll, lr), AndType(rl, rr)) =>
+        //  orConstraint(
+        //    andConstraint(rec(to=rl), rec(to=rr)),
+        //    orConstraint(
+        //      rec(from=ll),
+        //      rec(from=lr)))
 
         case (_, AndType(left, right)) =>
           andConstraint(rec(to=left), rec(to=right))
@@ -1437,7 +1468,7 @@ object Dol {
       val (numQues, labeledPrototype) = prepMatch(r, simplify(cleanedPrototype))
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
       val solveSetVariance = gatherVariance(r, labeledPrototype, Covariant)
-      val constraint = gatherConstraints(scope, solveSet, zOption, lowerType, labeledPrototype)
+      val constraint = gatherConstraints(scope, solveSet, zOption, lowerType, labeledPrototype) // TODO simplify(lowerType)?
       solveConstraint(scope, r, zOption, solveSet, solveSetVariance, constraint, labeledPrototype, Covariant)
     }
 

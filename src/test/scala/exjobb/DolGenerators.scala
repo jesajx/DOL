@@ -202,17 +202,16 @@ object DolGenerators {
           None
 
       val hideBehindTypeProj =
-        //if (size >= 4)
-        //  Seq(for {
-        //    (lowerSize, upperSize) <- splitSizeNonZero(size - 2)
-        //    (ctx2, x) <- ctx.newSymbol()
-        //    (ctx3, a) <- ctx2.newSymbol()
-        //    (ctx4, upperType) <- Gen.resize(upperSize, genSubtype(ctx3, scope, supertype))
-        //    (ctx5, lowerType) <- Gen.resize(lowerSize, genSubtype(ctx4, scope, upperType))
-        //    ctx6 <- ctx5.withBinding(x -> TypeDecl(a, lowerType, upperType))
-        //    // TODO WROOOONG. leaking scope into globalScope.
-        //  } yield (ctx6, TypeProj(x, a)))
-        //else
+        if (size >= 4 && NoFuture.allFreeVarsInType(supertype).intersect(scope.keySet).isEmpty)
+          Seq(for {
+            (lowerSize, upperSize) <- splitSizeNonZero(size - 2)
+            (ctx2, x) <- ctx.newSymbol()
+            (ctx3, a) <- ctx2.newSymbol()
+            (ctx4, upperType) <- Gen.resize(upperSize, genSubtype(ctx3, Map(), supertype))
+            (ctx5, lowerType) <- Gen.resize(lowerSize, genSubtype(ctx4, Map(), upperType))
+            ctx6 <- ctx5.withBinding(x -> TypeDecl(a, lowerType, upperType))
+          } yield (ctx6, TypeProj(x, a)))
+        else
           Seq()
 
       val noChange =
