@@ -51,11 +51,18 @@ object DolGenerators {
         // TODO unwrapRecTypes?
         // TODO cyclic variables? x.A <: y.A <: x.A
       } yield (ctx3, scope + (x -> typ))
-    else for {
-      (leftSize, rightSize) <- splitSizeNonZero(size, min=1)
-      (ctx2, scope2) <- Gen.resize(leftSize, genScope(ctx, scope))
-      (ctx3, scope3) <- Gen.resize(rightSize, genScope(ctx2, scope2))
-    } yield (ctx3, scope3)
+    else Gen.oneOf(
+      for {
+        (ctx2, x) <- ctx.newSymbol()
+        (ctx3, typ) <- Gen.resize(size, genType(ctx2, scope))
+        // TODO unwrapRecTypes?
+        // TODO cyclic variables? x.A <: y.A <: x.A
+      } yield (ctx3, scope + (x -> typ)),
+      for {
+        (leftSize, rightSize) <- splitSizeNonZero(size, min=1)
+        (ctx2, scope2) <- Gen.resize(leftSize, genScope(ctx, scope))
+        (ctx3, scope3) <- Gen.resize(rightSize, genScope(ctx2, scope2))
+      } yield (ctx3, scope3))
   }
 
   def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
@@ -78,39 +85,39 @@ object DolGenerators {
 
   /** Punch holes (`Que`) in `typ` to get a prototype.
    */
-  def genPrototypeFromType(ctx: GlobalContext, scope: Scope, typ: Type): Gen[(GlobalContext, Prototype)] =
+  def genPrototypeFromType(typ: Prototype): Gen[Prototype] = // TODO sized?
     oneOf(
-      const((ctx, Que)),
+      const(Que),
       typ match {
         // NOTE: RecTypes may not contain Prototypes. // TODO Or could they?
         case FieldDecl(a, aType) =>
           for {
-            (ctx2, aPrototype) <- genPrototypeFromType(ctx, scope, aType)
-          } yield (ctx2, FieldDecl(a, aPrototype))
+            aPrototype <- genPrototypeFromType(aType)
+          } yield FieldDecl(a, aPrototype)
         case TypeDecl(a, aLowerType, aUpperType) =>
           //for {
-          //  (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, scope, aLowerType)
-          //  (ctx3, aUpperPrototype) <- genPrototypeFromType(ctx2, scope, aUpperType)
+          //  (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, aLowerType)
+          //  (ctx3, aUpperPrototype) <- genPrototypeFromType(ctx2, aUpperType)
           //} yield (ctx3, TypeDecl(a, aLowerPrototype, aUpperPrototype))
           oneOf(
             for {
-              (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, scope, aLowerType)
-            } yield (ctx2, TypeDecl(a, aLowerPrototype, aUpperType)),
+              aLowerPrototype <- genPrototypeFromType(aLowerType)
+            } yield TypeDecl(a, aLowerPrototype, aUpperType),
             for {
-              (ctx2, aUpperPrototype) <- genPrototypeFromType(ctx, scope, aUpperType)
-            } yield (ctx2, TypeDecl(a, aLowerType, aUpperPrototype))
+              aUpperPrototype <- genPrototypeFromType(aUpperType)
+            } yield TypeDecl(a, aLowerType, aUpperPrototype)
           )
         case AndType(left, right) =>
           for {
-            (ctx2, leftPrototype) <- genPrototypeFromType(ctx, scope, left)
-            (ctx3, rightPrototype) <- genPrototypeFromType(ctx2, scope, right)
-          } yield (ctx3, AndType(leftPrototype, rightPrototype))
+            leftPrototype <- genPrototypeFromType(left)
+            rightPrototype <- genPrototypeFromType(right)
+          } yield AndType(leftPrototype, rightPrototype)
         case FunType(x, xType, resType) =>
           for {
-            (ctx2, xPrototype) <- genPrototypeFromType(ctx, scope, xType)
-            (ctx3, resPrototype) <- genPrototypeFromType(ctx2, scope, resType)
-          } yield (ctx3, FunType(x, xPrototype, resPrototype))
-        case _ => const((ctx, typ))
+            xPrototype <- genPrototypeFromType(xType)
+            resPrototype <- genPrototypeFromType(resType)
+          } yield FunType(x, xPrototype, resPrototype)
+        case _ => const(typ)
       }
     )
 
