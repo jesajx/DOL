@@ -57,6 +57,10 @@ object Dol {
   // what is happening in the current implementation (gatherConstraints and solve are
   // done concurrently), but it could be beneficial to make it more explicit.
 
+  // TODO Limitations of lattices.
+  // It might be interesting to create something similar to LVars, but with
+  // fewer restrictions. For example a cell of monoids.
+
 
   sealed trait Tree {
     type ThisType <: Tree // TODO = this.type?
@@ -727,55 +731,93 @@ object Dol {
       case _ => typ
     }
 
-    def eliminateVarUp(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj] = Set()): Type = typ match { // TODO wrong
-      case aProj @ TypeProj(x, a) if x == z =>
-        val aUpperType = typeProjectUpper(scope, x, a).getOrElse{error()}
-        eliminateVarUp(scope, z, aUpperType, visited + aProj)
-      case TypeProj(x, a) if x != z =>
-        typ
-      case AndType(left, right) =>
-        AndType(eliminateVarUp(scope, z, left, visited), eliminateVarUp(scope, z, right, visited))
-      case FunType(x, xType, xResType) if x != z =>
-        val newXType = eliminateVarDown(scope, z, xType, visited)
-        val newXResType = eliminateVarUp(scope, z, xResType, visited)
-        FunType(x, newXType, newXResType)
-      case RecType(x, xType) if x != z =>
-        RecType(z, eliminateVarUp(scope, z, xType, visited))
-      case FieldDecl(a, aType) =>
-        FieldDecl(a, eliminateVarUp(scope, z, aType, visited))
-      case TypeDecl(a, aLowerType, aUpperType) =>
-        val newALowerType = eliminateVarDown(scope, z, aLowerType, visited)
-        val newAUpperType = eliminateVarUp(scope, z, aUpperType, visited)
-        TypeDecl(a, newALowerType, newAUpperType)
-      case _ => typ // Bot, Top, Que, ErrorType
-    }
+    // TODO merge eliminateVars into gatherConstraints?
 
-    def eliminateVarDown(scope: Scope, z: Symbol, typ: Type, visited: Set[TypeProj]): Type = typ match { // TODO wrong.
-        case aProj @ TypeProj(x, a) if x == z =>
-          val aLowerType = typeProjectLower(scope, x, a).getOrElse{error()}
-          eliminateVarDown(scope, z, aLowerType, visited + aProj)
-        case TypeProj(x, a) if x != z =>
-          typ
+    /** Find the least supertype of `typ` such that `killSet` is not free.
+     *
+     * IMPORTANT: Assumes that `scope -- killSet` does not reference
+     * `killSet`.
+     *
+     * Use `variance=Contravariante` to instead find the greatest subtype of
+     * `typ` such that `killSet` is not free.
+     *
+     * If `typ` contains a `RecType` that can not be unwrapped (i.e. if
+     * `zOption = None` or the `RecType` is deeply nested), it may be replaces
+     * with Top or Bot as a whole.
+     *
+     * This is used when typechecking `Let`-expressions in order to make sure
+     * that the variable introduced by the `Let` is not used when it goes out of
+     * scope. For example if `Let(x, t1, t2)`, `t2: TypeProj(x, a)` and `x:
+     * TypeDecl(a, A, B)`, then `Let(x, t1, t2): B`.
+     */
+    def eliminateVars(scope: Scope, killSet: Set[Symbol], zOption: Option[Symbol], typ: Type, variance: Variance = Covariant, visited: Set[TypeProj] = Set(), changedVars: Map[Symbol, Type] = Map()): Type = {
+      if (zOption != None && killSet(zOption.get)) {
+        val z = zOption.get
+        val zType = eliminateVars(scope, killSet - z, zOption, typ, variance, visited, changedVars) // TODO inner zOption = None?
+        RecType(z, zType)
+      } else typ match {
+        case aProj @ TypeProj(x, a) if killSet(x) =>
+          val subst = variance match {
+            case Covariant =>
+              typeProjectUpper(scope, x, a).getOrElse{error()}
+            case Contravariant =>
+              typeProjectLower(scope, x, a).getOrElse{error()}
+            case _ => ??? // Not supposed to happen. // TODO vs just treat as if Covariant?
+          }
+          eliminateVars(scope, killSet, zOption, subst, variance, visited + aProj, changedVars)
+        case aProj @ TypeProj(x, a) if changedVars.contains(x) =>
+          val subst = variance match {
+            case Covariant =>
+              if (typeProjectUpper(scope + (x -> changedVars(x)), x, a) != None) // TODO hack. It is probably better to extend raise...
+                typ
+              else
+                typeProjectUpper(scope, x, a).get
+            case Contravariant =>
+              if (typeProjectLower(scope + (x -> changedVars(x)), x, a) != None) // TODO hack.
+                typ
+              else
+                typeProjectLower(scope, x, a).get
+            case _ => ??? // Not supposed to happen. // TODO vs just treat as if Covariant?
+          }
+          eliminateVars(scope, killSet, zOption, subst, variance, visited + aProj, changedVars)
         case AndType(left, right) =>
-          AndType(eliminateVarDown(scope, z, left, visited), eliminateVarDown(scope, z, right, visited))
-        case FunType(x, xType, xResType) if x != z =>
-          // TODO Is this correct? Can we end up deleting decls in xType that xResType needs?
-          val newXType = eliminateVarUp(scope, z, xType, visited)
-          val newXResType = eliminateVarDown(scope, z, xResType, visited)
+          val newLeft  = eliminateVars(scope, killSet, zOption, left, variance, visited, changedVars)
+          val newRight = eliminateVars(scope, killSet, zOption, right, variance, visited, changedVars)
+          AndType(newLeft, newRight)
+        case FunType(x, xType, xResType) =>
+          // TODO bug: if xType=RecType, newXType=Top, and xResType=TypeProj(x,_), then the result will not fulfill validTypeInScope.
+          val newXType    = eliminateVars(scope, killSet, None, xType, reverseVariance(variance), visited, changedVars)
+          val newXResType = eliminateVars(scope + (x -> xType), killSet - x, None, xResType, variance, visited, changedVars + (x -> newXType))
           FunType(x, newXType, newXResType)
-        case RecType(x, xType) if x != z =>
-          RecType(z, eliminateVarDown(scope, z, xType, visited))
+        case RecType(x, xType) =>
+          zOption match {
+            case Some(z) =>
+              val newXType = eliminateVars(scope + (x -> xType), killSet - x, zOption, xType, variance, visited, changedVars + (x -> ???))
+              RecType(x, newXType)
+            case None =>
+              if (allFreeVarsInType(xType).intersect(killSet).isEmpty)
+                typ
+              else variance match {
+                case Covariant     => Top
+                case Contravariant => Bot
+                case _ => ??? // Not supposed to happen. // TODO vs just treat as if Covariant?
+              }
+          }
         case FieldDecl(a, aType) =>
-          FieldDecl(a, eliminateVarDown(scope, z, aType, visited))
+          val newAType = eliminateVars(scope, killSet, None, aType, variance, visited, changedVars)
+          FieldDecl(a, newAType)
         case TypeDecl(a, aLowerType, aUpperType) =>
-          // TODO Can we end up narrowing too much so that no longer
-          // lower <: upper?
-          val newALowerType = eliminateVarUp(scope, z, aLowerType, visited)
-          val newAUpperType = eliminateVarDown(scope, z, aUpperType, visited)
+          val newALowerType = eliminateVars(scope, killSet, None, aLowerType, reverseVariance(variance), visited, changedVars)
+          val newAUpperType = eliminateVars(scope, killSet, None, aUpperType, variance, visited, changedVars)
           TypeDecl(a, newALowerType, newAUpperType)
-        case _ => typ // Bot, Top, Que, ErrorType
+        case _ => typ
+      }
     }
 
+
+    def eliminateVarUpOLD(scope: Scope, z: Symbol, typ: Type): Type = {
+      eliminateVars(scope, Set(z), None, typ)
+    }
 
     def error() = {throw new TypecheckingError(); ErrorType}
 
@@ -792,7 +834,13 @@ object Dol {
         val typedXTerm = typecheckTerm(su, xTerm, Que, scope)
         val xType = typedXTerm.assignedTypeOption.get // TODO Annoying, choose some typesafe way to do this instead...
         val typedResTerm = typecheckTerm(su, resTerm, p, scope + (x -> xType))
-        Let(x, typedXTerm, typedResTerm).withType(eliminateVarUp(scope, x, typedResTerm.assignedType, Set()))
+
+        val zOption = typedResTerm match {
+          case Var(z) => Some(z)
+          case _ => None
+        }
+        val letType = eliminateVars(scope, Set(x), zOption, typedResTerm.assignedType)
+        Let(x, typedXTerm, typedResTerm).withType(letType)
       case (Sel(x, a), p) =>
         term.withType {
           typecheckTerm(su, Var(x), FieldDecl(a, p), scope).assignedType match {
@@ -1061,16 +1109,16 @@ object Dol {
     /** Get rid of any (RecType(y, yType)) in typ by renaming y to x.
      * Only searches immediate AndTypes. Any nested RecTypes are ignored.
      */
-    def eliminateRecursiveTypes(typ: Type, x: Symbol): Type = typ match {
+    def unwrapRecTypes(typ: Type, x: Symbol): Type = typ match {
       case RecType(y, yType) =>
         // TODO do rename and rectype-elimination at the same time. i.e. pass
         // down set of symbols equivalent to x?
         // TODO Alternatively do all renames at end? renameAll(set(y,z,w) -> x)
-        eliminateRecursiveTypes(typeRenameVar(y, x, yType), x) // NOTE: it is fine for x to be free in yType.
+        unwrapRecTypes(typeRenameVar(y, x, yType), x) // NOTE: it is fine for x to be free in yType.
       case AndType(left, right) =>
         AndType(
-          eliminateRecursiveTypes(left, x),
-          eliminateRecursiveTypes(right, x))
+          unwrapRecTypes(left, x),
+          unwrapRecTypes(right, x))
       case typ => typ
     }
 
@@ -1255,14 +1303,14 @@ object Dol {
 
         case (aProj @ TypeProj(x, a), RecType(y, yType)) if !solveSet(aProj) =>
           val aUpperType = if (visitedLeft((aProj, to))) Top else typeProjectUpper(scope, x, a).getOrElse{throw new TypecheckingError(s"no upper bound of $aProj")}
-          if (scope.contains(y)) ??? // TODO
+          if (scope.contains(y)) return FalseConstraint // TODO
           orConstraint(
             rec(from=aUpperType, visitedLeft = visitedLeft+((aProj, to))),
             rec(scope + (y -> yType), to=yType)) // TODO check for solveSet in `to`?
 
 
         case (AndType(left, right), RecType(y, yType)) =>
-          if (scope.contains(y)) ??? // TODO may need SymbolUniverse after all...
+          if (scope.contains(y)) return FalseConstraint // TODO may need SymbolUniverse after all...
           orConstraint(
             rec(scope + (y -> yType), to=yType),
             orConstraint(
@@ -1298,7 +1346,7 @@ object Dol {
 
 
         case (Top | _: FunType | _: FieldDecl | _: TypeDecl, RecType(y, yType)) if zOption != None =>
-          if (scope.contains(y)) ??? // TODO
+          if (scope.contains(y)) return FalseConstraint // TODO
           rec(scope + (y -> yType), to=yType) // TODO check for solveSet in `to`?
 
         case (RecType(x, xType), Bot | _: FieldDecl | _: TypeDecl | _: FunType | _: RecType | _: TypeProj) if zOption != None =>
@@ -1415,7 +1463,7 @@ object Dol {
 
       if (scope.contains(r))
         throw new TypecheckingError(s"var $r is already in use")
-      val cleanedPrototype = zOption.map{z => eliminateRecursiveTypes(lowerPrototype, z)}.getOrElse(lowerPrototype)
+      val cleanedPrototype = zOption.map{z => unwrapRecTypes(lowerPrototype, z)}.getOrElse(lowerPrototype)
       val (numQues, labeledPrototype) = prepMatch(r, simplify(cleanedPrototype))
       val solveSetVariance = gatherVariance(r, labeledPrototype, Contravariant)
       val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet // TODO get rid of solveSet somehow?
@@ -1423,13 +1471,13 @@ object Dol {
       solveConstraint(scope, r, zOption, solveSet, solveSetVariance, constraint, labeledPrototype, Contravariant)
     }
 
-    /** Like raise(scope(z), prototype), but does eliminateRecursiveTypes(_, z) first.
+    /** Like raise(scope(z), prototype), but does unwrapRecTypes(_, z) first.
      */
     def varRaise(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = {
       raise(scope, r, Some(z), scope(z), prototype)
     }
 
-    /** Like lower(prototype, scope(z)), but does eliminateRecursiveTypes(_, z) first.
+    /** Like lower(prototype, scope(z)), but does unwrapRecTypes(_, z) first.
      */
     def varLower(scope: Scope, r: Symbol, z: Symbol, prototype: Prototype): Option[Type] = {
       lower(scope, r, None, prototype, scope(z))
@@ -1501,8 +1549,8 @@ object Dol {
      *  Formally, x: xType, xType <: To.
      */
     def varIsSubtypeOf(scope: Scope, z: Symbol, supertype: Type): Boolean = {
-      //val zType = eliminateRecursiveTypes(scope(z), z)
-      //val zSupertype = eliminateRecursiveTypes(supertype, z)
+      //val zType = unwrapRecTypes(scope(z), z)
+      //val zSupertype = unwrapRecTypes(supertype, z)
       //isSubtypeOf(scope, zType, zSupertype)
       // TODO need to unwrap rectypes when we upcast rectype!
 
@@ -1651,20 +1699,67 @@ object Dol {
       case _ => false
     }
 
-    // TODO make a variant that expands TypeProjs?
-    def typeDfsSet[T](typ: Type)(f: Type => Set[T]): Set[T] = f(typ) ++ (typ match {
+    def typeMonoidMap[T](scope: Scope, typ: Type, variance: Variance = Covariant)(mappend: (T, T) => T)(f: (Scope, Type, Variance) => T): T = typ match {
       case FunType(x, xType, resType) =>
-        typeDfsSet(xType)(f) ++ typeDfsSet(resType)(f)
+        mappend(
+          f(scope, typ, variance),
+          mappend(
+            typeMonoidMap(scope, xType, reverseVariance(variance))(mappend)(f),
+            typeMonoidMap(scope + (x -> xType), resType, variance)(mappend)(f)))
       case RecType(x, xType) =>
-        typeDfsSet(xType)(f)
+        mappend(
+          f(scope, typ, variance),
+          typeMonoidMap(scope + (x -> xType), xType, variance)(mappend)(f))
       case FieldDecl(a, aType) =>
-        typeDfsSet(aType)(f)
+        mappend(
+          f(scope, typ, variance),
+          typeMonoidMap(scope, aType, variance)(mappend)(f))
       case TypeDecl(a, aLowerType, aUpperType) =>
-        typeDfsSet(aLowerType)(f) ++ typeDfsSet(aUpperType)(f)
+        mappend(
+          f(scope, typ, variance),
+          mappend(
+            typeMonoidMap(scope, aLowerType, reverseVariance(variance))(mappend)(f),
+            typeMonoidMap(scope, aUpperType, variance)(mappend)(f)))
       case AndType(left, right) =>
-        typeDfsSet(left)(f) ++ typeDfsSet(right)(f)
-      case _ => Set() // Bot, Top, Que, TypeProj, ErrorType
-    })
+        mappend(
+          f(scope, typ, variance),
+          mappend(
+            typeMonoidMap(scope, left, variance)(mappend)(f),
+            typeMonoidMap(scope, right, variance)(mappend)(f)))
+      case _ => f(scope, typ, variance) // Bot, Top, Que, TypeProj, ErrorType
+    }
+
+
+    // TODO make a variant that expands TypeProjs?
+    //def typeDfsSet[T](typ: Type)(f: Type => Set[T]): Set[T] = f(typ) ++ (typ match {
+    //  case FunType(x, xType, resType) =>
+    //    typeDfsSet(xType)(f) ++ typeDfsSet(resType)(f)
+    //  case RecType(x, xType) =>
+    //    typeDfsSet(xType)(f)
+    //  case FieldDecl(a, aType) =>
+    //    typeDfsSet(aType)(f)
+    //  case TypeDecl(a, aLowerType, aUpperType) =>
+    //    typeDfsSet(aLowerType)(f) ++ typeDfsSet(aUpperType)(f)
+    //  case AndType(left, right) =>
+    //    typeDfsSet(left)(f) ++ typeDfsSet(right)(f)
+    //  case _ => Set() // Bot, Top, Que, TypeProj, ErrorType
+    //})
+
+    def typeDfsSet[T](typ: Type)(f: Type => Set[T]): Set[T] = NoFuture.typeMonoidMap[Set[T]](Map(), typ){_ ++ _}{
+      case (_, typ, _) => f(typ)
+    }
+
+    def validTypeInScope(scope: Scope, typ: Type, variance: Variance = Covariant): Boolean = NoFuture.typeMonoidMap[Boolean](scope, typ, variance){_ && _}{
+      case (scope, TypeProj(x, a), variance) =>
+        scope.contains(x) && (variance match {
+          case Covariant =>
+            NoFuture.typeProjectUpper(scope, x, a) != None
+          case Contravariant =>
+            NoFuture.typeProjectLower(scope, x, a) != None
+          case _ => ???
+        })
+      case _ => true
+    }
 
     def allTypeMemberSymbolsInType(typ: Type): Set[Symbol] = typeDfsSet(typ) {
       case TypeProj(_, a)    => Set(a)

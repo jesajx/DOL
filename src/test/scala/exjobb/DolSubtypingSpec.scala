@@ -302,6 +302,7 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
     }}
   }
 
+
   property("NoFuture.varLower -- a <: b ; p=gen(a) ==> lower(a, p) <: lower(b, p)") = {
     val generator: Gen[(GlobalContext, Symbol, Symbol, Type, Type, Prototype)] = for {
       ctx1 <- genGlobalScope()
@@ -516,7 +517,6 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
     }}
   }
 
-
   property("NoFuture.rigidEqualTypes -- rigidEqualTypes(a, a)") = { // TODO unnecessary?
     val generator: Gen[(GlobalContext, Type)] = for {
       ctx1 <- genGlobalScope()
@@ -544,21 +544,130 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
       (ctx3, a) <- genType(ctx2, Map())
     } yield (ctx3, z, a)
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, z, a) =>
-      Prop.protect(NoFuture.varEqualTypes(ctx.globalScope + (z -> a), z, NoFuture.simplify(a)))
+      val res = NoFuture.simplify(a)
+      (prettyNamed("simplify(a)", res)
+        |: Prop.protect(NoFuture.varEqualTypes(ctx.globalScope + (z -> a), z, res)))
     }}
   }
 
 
-  // a <: elimUp(a)
-  // elimDown(a) <: a
-  // elimUp(elimUp(a)) == elimUp(a)
-  // elimDown(elimUp(a)) == elimUp(a)
-  // elimUp(elimDown(a)) == elimDown(a)
-  // elimDown(elimDown(a)) == elimDown(a)
-  //
-  // !allFreeVars(elimDown(a, x)).contains(x)
-  // !allFreeVars(elimUp(a, x)).contains(x)
 
+  property("NoFuture.eliminateVars -- free(elimUp(a, S)).intersect(S) = {}") = {
+    val generator: Gen[(GlobalContext, Scope, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, localScope) <- genScope(ctx1)
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, k) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map())
+      killSeq <- const(ctx4.globalScope.keys.toSet + k)
+    } yield (ctx4, localScope, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, z, a) =>
+      val scope = ctx.globalScope
+      val killSet = localScope.keySet
+      val res = NoFuture.eliminateVars(scope, killSet, Some(z), a)
+      val free = NoFuture.allFreeVarsInType(res)
+      (prettyNamed("elimUp(a, S)", res)
+        |: prettyNamed("free(elimUp(a))", free)
+        |: Prop.protect(free.intersect(killSet).isEmpty))
+    }}
+  }
+
+  property("NoFuture.eliminateVars -- a <: elimUp(a, S)") = {
+    val generator: Gen[(GlobalContext, Scope, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, localScope) <- genScope(ctx1)
+      (ctx3, z) <- ctx2.newSymbol()
+      (ctx4, k) <- ctx3.newSymbol()
+      (ctx5, a) <- genType(ctx4, localScope)
+      // TODO let zOption=None sometimes?
+    } yield (ctx5, localScope, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, z, a) =>
+      val scope = ctx.globalScope ++ localScope
+      val killSet = localScope.keySet
+      val res = NoFuture.eliminateVars(scope, killSet, Some(z), a)
+      (prettyNamed("elimUp(a, S)", res)
+        |: Prop.protect(NoFuture.varIsSubtypeOf(ctx.globalScope + (z -> a), z, res))) // NOTE: Subtype without localScope, since localScope was eliminated.
+    }}
+  }
+
+  property("NoFuture.eliminateVars -- S not free in a ==> elimUp(a, S) == a") = {
+    val generator: Gen[(GlobalContext, Scope, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, localScope) <- genScope(ctx1)
+      (ctx3, z) <- ctx2.newSymbol()
+      (ctx4, k) <- ctx3.newSymbol()
+      (ctx5, a) <- genType(ctx4, localScope)
+      killSeq <- someOf((localScope.keys.toSet -- NoFuture.allFreeVarsInType(a)) + k)
+    } yield (ctx5, localScope, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, z, a) =>
+      val scope = ctx.globalScope ++ localScope
+      val killSet = localScope.keySet
+      val res = NoFuture.eliminateVars(scope, killSet, Some(z), a)
+      (prettyNamed("elimUp(a)", res)
+        |: Prop.protect(res == a)) // NOTE: Exact, not varEqualTypes.
+    }}
+  }
+
+  property("NoFuture.eliminateVars -- a <: b ==> elimUp(a, S) <: elimUp(b, S)") = {
+    val generator: Gen[(GlobalContext, Scope, Symbol, Type, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, localScope) <- genScope(ctx1)
+      (ctx3, z) <- ctx2.newSymbol()
+      (ctx4, b) <- genType(ctx3, localScope)
+      (ctx5, a) <- genSubtype(ctx4, localScope, b)
+    } yield (ctx5, localScope, z, a, b)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, z, a, b) =>
+      val scope = ctx.globalScope ++ localScope
+      val killSet = localScope.keySet
+      val elimA = NoFuture.eliminateVars(scope, killSet, Some(z), a)
+      val elimB = NoFuture.eliminateVars(scope, killSet, Some(z), b)
+      (prettyNamed("elimUp(b)", elimB)
+        |: prettyNamed("elimUp(a)", elimA)
+        |: Prop.protect(NoFuture.varIsSubtypeOf(ctx.globalScope + (z -> elimA), z, elimB)))
+    }}
+  }
+
+  property("NoFuture.eliminateVars -- validInScope: elimUp(a, S)") = {
+    val generator: Gen[(GlobalContext, Scope, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, localScope) <- genScope(ctx1)
+      (ctx3, z) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map())
+    } yield (ctx4, localScope, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, z, a) =>
+      val scope = ctx.globalScope ++ localScope
+      val killSet = localScope.keySet
+      val elimA = NoFuture.eliminateVars(scope, killSet, Some(z), a)
+      (prettyNamed("elimUp(a)", elimA)
+        |: Prop.protect(NoFuture.validTypeInScope(ctx.globalScope, elimA)))
+    }}
+  }
+
+  property("NoFuture.eliminateVars -- validInScope: elimDown(a, S)") = {
+    // TODO Why does this not find `elimUp(`FunType(3, RecType(5, TypeDecl(4, Bot, TypeProj(1, 4))), TypeProj(3, 4)), Set(1))`?
+    val generator: Gen[(GlobalContext, Scope, Symbol, Type)] = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, localScope) <- genScope(ctx1)
+      (ctx3, z) <- ctx2.newSymbol()
+      (ctx4, a) <- genType(ctx3, Map())
+    } yield (ctx4, localScope, z, a)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, z, a) =>
+      val scope = ctx.globalScope ++ localScope
+      val killSet = localScope.keySet
+      val elimA = NoFuture.eliminateVars(scope, killSet, Some(z), a, variance=Contravariant)
+      (prettyNamed("elimDown(a)", elimA)
+        |: Prop.protect(NoFuture.validTypeInScope(ctx.globalScope, elimA)))
+    }}
+  }
+
+
+
+
+  // TODO check for validTypeInScope for lub and raise too?
+
+  // TODO how to efficiently check minimality of eliminateVars?
+
+  // TODO test eliminateVarsDown separately from eliminateVarsUp?
 
   // TODO raise(AndType(A,B), AndType(Que, Que)) == simplify(AndType(A, B)) -- i.e. exact?
 
@@ -573,6 +682,6 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
   // TODO typeProjectLower -- multi.  (TODO: depends on lub....)
   // TODO lub: lattice properties
 
-  // TODO check eliminateVarUp by starting with a type with no vars, and then
-  // replacing parts with vars.  scope={},Int  --> scope={x->{T=Int}},x.T
+  // TODO test eliminateVars by starting with a type with no vars, and then
+  // replacing parts with vars?  scope={},Int  --> scope={x->{T=Int}},x.T
 }

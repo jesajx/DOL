@@ -99,8 +99,10 @@ object DolShrinkers {
           (ctx2, newALowerType, newAUpperType) <- shrinkTypePair(ctx, scope, aLowerType, aUpperType)
         } yield (ctx2, TypeDecl(a, newALowerType, newAUpperType)): (GlobalContext, Type)))
     case (Bot, RecType(x, xType)) =>
-      ((ctx, NoFuture.eliminateVarUp(ctx.globalScope ++ scope, x, xType)) // TODO vs "isVarFreeInType then don't"? we may want to just shrinkSupertype to test eliminateVarUp, but probably not to test isVarFreeInType...
-        #:: (for {
+      (
+        (if (!NoFuture.allFreeVarsInType(xType).contains(x)) Stream((ctx, xType)) else Stream())
+        // TODO vs "isVarFreeInType then don't"? we may want to just shrinkSupertype to test eliminateVarUp, but probably not to test isVarFreeInType...
+        #::: (for {
           (ctx2, newXType) <- shrinkSupertype(ctx, scope + (x -> xType), Bot, xType)
         } yield (ctx2, RecType(x, xType)): (GlobalContext, Type)))
     case (Bot, AndType(left, right)) =>

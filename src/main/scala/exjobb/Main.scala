@@ -13,10 +13,11 @@ object Main {
 //raisedebug()
 //debugsub()
 //debugvarrename()
-debuglub()
+//debuglub()
 //debuglub3()
 //debuglubmin()
 //debugproj()
+debugelim()
 }
 
   sealed case class GlobalContext(scope: Scope, nextSymbol: Int)
@@ -1866,7 +1867,7 @@ val res1 = NoFuture.varLower(scope, r, z, p)
 P.namedln("res1", res1)
 
 
-//val (numQues, labeledPrototype) = prepMatch(r, simplify(eliminateRecursiveTypes(p, z)))
+//val (numQues, labeledPrototype) = prepMatch(r, simplify(unwrapRecTypes(p, z)))
 val (numQues, labeledPrototype) = prepMatch(r, simplify(p))
 
 //P.namedln("labeledPrototype", labeledPrototype)
@@ -3449,15 +3450,28 @@ val (GlobalContext(scope1, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Sym
 //  TypeProj(2, 3)
 //)
 
-(
-  GlobalContext(Map(1 -> TypeDecl(2, Top, Top)), 6),
-  5,
+//(
+//  GlobalContext(Map(1 -> TypeDecl(2, Top, Top)), 6),
+//  5,
+//  0,
+//  RecType(3, RecType(4, Top)),
+//  TypeProj(1, 2)
+//)
+
+( // TODO
+  GlobalContext(
+    Map(
+      5 -> TypeDecl(6, RecType(7, Top), RecType(7, Top))
+    ),
+    20
+  ),
+  1,
   0,
-  RecType(3, RecType(4, Top)),
-  TypeProj(1, 2)
+  TypeProj(5, 6),
+  RecType(4, TypeProj(5, 6))
 )
 
-val scope = scope1 + (z -> eliminateRecursiveTypes(a, z))
+val scope = scope1 + (z -> unwrapRecTypes(a, z))
 
 val res1 = NoFuture.varRaise(scope, r, z, p)
 P.namedln("res1", res1)
@@ -6813,6 +6827,23 @@ P.namedln("res == expected", varEqualTypes(scope + (z -> res.get), z, aLowerType
 
 
 
+def debugelim(): Unit = {
+  val (GlobalContext(scope, nextSymbol), killSet, z, a): (GlobalContext, Set[Symbol], Symbol, Type) =
+
+  (
+    GlobalContext(
+      Map(1 -> TypeDecl(4, Bot, FunType(3, Top, Top))),
+      20),
+    Set(1),
+    0,
+    FunType(3, RecType(5, TypeDecl(4, Bot, TypeProj(1, 4))), TypeProj(3, 4))
+  )
+
+  val res = eliminateVars(scope, killSet, Some(z), a, variance=Contravariant)
+  P.namedln("res", res)
+
+  P.namedln("valid(res)", NoFuture.validTypeInScope(scope, res))
+}
 
 
 

@@ -21,6 +21,8 @@ object DolGenerators {
 
   // TODO reuse symbols for bound vars
 
+  // TODO Maybe let "1 node" == "size 0"? Since trees with zero nodes do not
+  // make sense in DOL. This way some Gen.fail-cases can be avoided.
 
   // TODO INV: globalScope.keys.intersect(scope.keys) == Set()
   sealed case class GlobalContext(globalScope: Scope = Map(), nextSymbol: Int = 0) {
@@ -40,6 +42,22 @@ object DolGenerators {
 
   def genGlobalScope(ctx: GlobalContext = GlobalContext()): Gen[GlobalContext] = const(ctx)
 
+  def genScope(ctx: GlobalContext, scope: Scope = Map()): Gen[(GlobalContext, Scope)] = Gen.sized{ size =>
+    if (size <= 0)
+      const((ctx, Map()))
+    else if (size == 1) for {
+        (ctx2, x) <- ctx.newSymbol()
+        (ctx3, typ) <- Gen.resize(size, genType(ctx2, scope))
+        // TODO unwrapRecTypes?
+        // TODO cyclic variables? x.A <: y.A <: x.A
+      } yield (ctx3, scope + (x -> typ))
+    else for {
+      (leftSize, rightSize) <- splitSizeNonZero(size, min=1)
+      (ctx2, scope2) <- Gen.resize(leftSize, genScope(ctx, scope))
+      (ctx3, scope3) <- Gen.resize(rightSize, genScope(ctx2, scope2))
+    } yield (ctx3, scope3)
+  }
+
   def genFunType(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, Type)] = Gen.sized{ size =>
     if (size < 3)
       Gen.fail
@@ -47,7 +65,7 @@ object DolGenerators {
       (argSize, resSize) <- splitSizeNonZero(size - 1)
       (ctx2, x)   <- ctx.newSymbol()
       (ctx3, arg) <- Gen.resize(argSize, genType(ctx2, scope))
-      (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope))
+      (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope + (x -> arg)))
     } yield (ctx4, FunType(x, arg, res))
   }
 
@@ -512,7 +530,7 @@ object DolGenerators {
     (ctx2, x) <- ctx.newSymbol()
     (ctx3, p1) <- genInferenceProblem(ctx2, scope)
     (ctx4, p2) <- genInferenceProblem(ctx3, scope + (x -> p1.expectedType))
-    resType <- NoFuture.eliminateVarUp((ctx4.globalScope ++ scope), x, p2.expectedType, Set())
+    resType <- const(NoFuture.eliminateVars((ctx4.globalScope ++ scope), Set(x), None, p2.expectedType)) // TODO zOption=Some(z) if p1.term is Var(z)?
   } yield (ctx4, InferenceProblem(Let(x, p1.term, p2.term), Que, scope, Let(x, p1.expected, p2.expected).withType(resType)))
 
   def genSelInferenceProblem(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, InferenceProblem)] = { // TODO Gen.sized
