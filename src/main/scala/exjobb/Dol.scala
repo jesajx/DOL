@@ -162,30 +162,40 @@ object Dol {
 
 
   object Typed {
-    sealed case class Term(term: Typed.InnerTerm, typ: Type)
-    sealed case class Def(d: Typed.InnerDef, typ: Type)
-
-    sealed trait InnerTerm {
-      def :-(typ: Type) = Typed.Term(this, typ)
+    type Term = Typed.Term.:-
+    type Def  = Typed.Def.:-
+    object Term {
+      sealed case class :-(term: TypedTermLHS, typ: Type)
     }
-    case class Var(x: Symbol)                                         extends Typed.InnerTerm
-    case class App(x: Symbol, y: Symbol)                              extends Typed.InnerTerm
-    case class Let(x: Symbol, xTerm: Typed.Term, resTerm: Typed.Term) extends Typed.InnerTerm
-    case class Sel(x: Symbol, a: Symbol)                              extends Typed.InnerTerm
-    case class Fun(x: Symbol, xType: Type, body: Typed.Term)          extends Typed.InnerTerm
-    case class Obj(x: Symbol, xType: Type, body: Typed.Def)           extends Typed.InnerTerm
 
-    sealed trait InnerDef {
-      def :-(typ: Type) = Typed.Def(this, typ)
+    object Def {
+      sealed case class :-(d: TypedDefLHS, typ: Type)
     }
-    case class FieldDef(a: Symbol, aTerm: Typed.Term)    extends Typed.InnerDef
-    case class TypeDef(a: Symbol, aType: Type)           extends Typed.InnerDef
-    case class AndDef(left: Typed.Def, right: Typed.Def) extends Typed.InnerDef
   }
 
+  sealed trait TypedTermLHS {
+    def :-(typ: Type) = Typed.Term.:-(this, typ)
+  }
+  sealed trait TypedDefLHS {
+    def :-(typ: Type) = Typed.Def.:-(this, typ)
+  }
+
+  case class TypedVar(x: Symbol)                                         extends TypedTermLHS
+  case class TypedApp(x: Symbol, y: Symbol)                              extends TypedTermLHS
+  case class TypedLet(x: Symbol, xTerm: Typed.Term, resTerm: Typed.Term) extends TypedTermLHS
+  case class TypedSel(x: Symbol, a: Symbol)                              extends TypedTermLHS
+  case class TypedFun(x: Symbol, xType: Type, body: Typed.Term)          extends TypedTermLHS
+  case class TypedObj(x: Symbol, xType: Type, body: Typed.Def)           extends TypedTermLHS
+
+  case class TypedFieldDef(a: Symbol, aTerm: Typed.Term)    extends TypedDefLHS
+  case class TypedTypeDef(a: Symbol, aType: Type)           extends TypedDefLHS
+  case class TypedAndDef(left: Typed.Def, right: Typed.Def) extends TypedDefLHS
+
   object :- {
-    def unapply(t: Typed.Term): Option[(Typed.InnerTerm, Type)] = Some((t.term, t.typ))
-    def unapply(t: Typed.Def): Option[(Typed.InnerDef, Type)] = Some((t.d, t.typ))
+    def apply(lhs: TypedTermLHS, rhs: Type): Typed.Term = lhs :- rhs
+    def apply(lhs: TypedDefLHS, rhs: Type): Typed.Def = lhs :- rhs
+    def unapply(t: Typed.Term): Option[(TypedTermLHS, Type)] = Some((t.term, t.typ))
+    def unapply(t: Typed.Def): Option[(TypedDefLHS, Type)] = Some((t.d, t.typ))
   }
 
 
@@ -234,16 +244,8 @@ object Dol {
     case (_, ConstantVariance) => a
   }
 
-  type TypedTerm = Term // TODO Do something a bit more interesting here? Only serves as documentation right now.
-  type TypedDef = Def // TODO Do something a bit more interesting here? Only serves as documentation right now.
-  //sealed trait Typed { // TODO maybe something like this?
-  //  val assignedTypeOption: Type
-  //}
-  //trait TypedTerm extends Term with Typed
-
   def pairToList[T](pair: (T, T)): List[T] = List(pair._1, pair._2)
   def max(rest: Int*): Int = rest.toList.max
-
 
   sealed trait Constraint
 
@@ -826,7 +828,7 @@ object Dol {
 
     def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): Typed.Term = (term, prototype) match {
       case (Var(x), p) =>
-        Typed.Var(x) :- (varRaise(scope, su.newSymbol(), x, p) match {
+        TypedVar(x) :- (varRaise(scope, su.newSymbol(), x, p) match {
           case Some(res) => simplify(res)
           case None => ???; ErrorType
         })
@@ -836,13 +838,13 @@ object Dol {
         val typedResTerm = typecheckTerm(su, resTerm, p, scope + (x -> typedXTerm.typ))
 
         val zOption = typedResTerm match {
-          case (Typed.Var(z) :- _) => Some(z)
+          case (TypedVar(z) :- _) => Some(z)
           case _ => None
         }
         val letType = eliminateVars(scope, Set(x), zOption, typedResTerm.typ)
-        Typed.Let(x, typedXTerm, typedResTerm) :- letType
+        TypedLet(x, typedXTerm, typedResTerm) :- letType
       case (Sel(x, a), p) =>
-        Typed.Sel(x, a) :- {
+        TypedSel(x, a) :- {
           typecheckTerm(su, Var(x), FieldDecl(a, p), scope).typ match {
             case FieldDecl(b, bType) if a == b =>
               bType
@@ -852,7 +854,7 @@ object Dol {
         }
       case (App(x, y), p) =>
         val z = su.newSymbol()
-        Typed.App(x, y) :- {
+        TypedApp(x, y) :- {
           typecheckTerm(su, Var(x), FunType(z, Que, p), scope).typ match {
             case FunType(w, zType, zResType) if w == z =>
               if (scope.contains(z)) ??? // TODO rename
@@ -883,7 +885,7 @@ object Dol {
           case Some(loweredXType) =>
             val localScope = scope + (x -> xType) // TODO xType vs loweredXType? what happens if loweredXType is Bot? special case that?
             val typedResTerm = typecheckTerm(su, resTerm, resPrototype, localScope)
-            Typed.Fun(x, xType, typedResTerm) :- FunType(x, loweredXType, typedResTerm.typ)
+            TypedFun(x, xType, typedResTerm) :- FunType(x, loweredXType, typedResTerm.typ)
         }
       case (Obj(x, xType, defs), p) =>
         val localScope = scope + (x -> xType)
@@ -892,7 +894,7 @@ object Dol {
           case AndDef(left, right) =>
             val typedLeft  = typecheckDef(left)
             val typedRight = typecheckDef(right)
-            Typed.AndDef(typedLeft, typedRight) :- AndType(typedLeft.typ, typedRight.typ)
+            TypedAndDef(typedLeft, typedRight) :- AndType(typedLeft.typ, typedRight.typ)
           case FieldDef(a, aTerm) =>
             val aPrototype = raise(scope, su.newSymbol(), None, xType, FieldDecl(a, Que)) match {
               case Some(FieldDecl(b, bPrototype)) if a == b => bPrototype
@@ -900,7 +902,7 @@ object Dol {
               case _ => error()
             }
             val aTypedTerm = typecheckTerm(su, aTerm, aPrototype, localScope)
-            Typed.FieldDef(a, aTypedTerm) :- FieldDecl(a, aTypedTerm.typ)
+            TypedFieldDef(a, aTypedTerm) :- FieldDecl(a, aTypedTerm.typ)
           case TypeDef(a, aType) =>
             val typ = TypeDecl(a, aType, aType)
             val declPrototype = raise(scope, su.newSymbol(), None, xType, TypeDecl(a, Que, Que)) match {
@@ -912,7 +914,7 @@ object Dol {
               case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
               case _ => error()
             }
-            Typed.TypeDef(a, aType) :- myType
+            TypedTypeDef(a, aType) :- myType
           case _ => ??? // complains about DefFuture.
         }
         // TODO check everything in xType is in defs
@@ -926,7 +928,7 @@ object Dol {
           }
           varRaise(scope + (x -> xType), su.newSymbol(), x, p) match {
             case Some(typ) =>
-              Typed.Obj(x, xType, typedDefs) :- typ
+              TypedObj(x, xType, typedDefs) :- typ
             case None =>
               throw new TypecheckingError(s"fail raise($x, ${typedDefs.typ}, $p)")
           }
@@ -1067,25 +1069,14 @@ object Dol {
       val (rightDef :- rightType) = second
       val typesAreEqual = rigidEqualTypes(leftType, rightType)
       val defsAreEqual = (leftDef, rightDef) match {
-        case (Typed.AndDef(l1, r1), Typed.AndDef(l2, r2)) =>
+        case (TypedAndDef(l1, r1), TypedAndDef(l2, r2)) =>
           (equalDefs(l1, l2) && equalDefs(r1, r2))
-        case (Typed.FieldDef(a, aTerm), Typed.FieldDef(b, bTerm)) =>
+        case (TypedFieldDef(a, aTerm), TypedFieldDef(b, bTerm)) =>
           (a == b && equalTerms(aTerm, bTerm))
         case _ => // TypeDef and mismatched
           (leftDef == rightDef)
       }
       (defsAreEqual && typesAreEqual)
-      //if (defHasDuplicates(first)) ???
-      //if (defHasDuplicates(second)) ???
-      //val firstMap  = defAsMap(first)
-      //val secondMap = defAsMap(second)
-
-      //(firstMap.keys == secondMap.keys
-      //  && mapIntersect(firstMap, secondMap){
-      //    case (Typed.FieldDef(a, aTerm), Typed.FieldDef(b, bTerm)) if a == b => (a == b && equalTerms(aTerm, bTerm))
-      //    case (Typed.TypeDef(a, aType), Typed.TypeDef(b, bType)) if a == b   => (a == b && rigidEqualTypes(aType, bType))
-      //    case _ => false
-      //  }.values.forall{(x: Boolean) => x})
     }
 
     /** Check if `first` and `second` are equal.
@@ -1105,12 +1096,12 @@ object Dol {
       val (rightTerm :- rightType) = second
       val theTypesAreEqual = rigidEqualTypes(leftType, rightType) // TODO vs subtyping-equal?
       val theTermsAreEqual = (leftTerm, rightTerm) match {
-        case (Typed.Let(x, xTerm, xResTerm), Typed.Let(y, yTerm, yResTerm)) =>
+        case (TypedLet(x, xTerm, xResTerm), TypedLet(y, yTerm, yResTerm)) =>
           (x == y && equalTerms(xTerm, yTerm) && equalTerms(xResTerm, yResTerm))
-        case (Typed.Obj(x, xType, xBody), Typed.Obj(y, yType, yBody)) =>
-          (x == y && (xType == yType) && equalDefs(xBody, yBody))
-        case (Typed.Fun(x, xType, xBody), Typed.Fun(y, yType, yBody)) =>
-          (x == y && (xType == yType) && equalTerms(xBody, yBody))
+        case (TypedObj(x, xType, xBody), TypedObj(y, yType, yBody)) =>
+          (x == y && xType == yType && equalDefs(xBody, yBody))
+        case (TypedFun(x, xType, xBody), TypedFun(y, yType, yBody)) =>
+          (x == y && xType == yType && equalTerms(xBody, yBody))
         case _ => // Var, App, Sel and mismatched
           (leftTerm == rightTerm)
       }

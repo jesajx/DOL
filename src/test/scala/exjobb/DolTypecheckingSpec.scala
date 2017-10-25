@@ -82,16 +82,16 @@ object DolTypecheckingSpec extends Properties("DolTypecheckingSpec") { // TODO R
     //  shrinkInferenceProblem(ctx, problem, isRoot=true)
     //}
     //Prop.forAllShrink(generator, shrink){ case (ctx, problem) =>
-    Prop.forAll(generator){prettyProp{case (ctx, problem) =>
-      Prop.protect {
-        val p = InferenceProblem.assemble(ctx, problem)
+    Prop.forAll(generator){case (ctx, problem) =>
+      val p = InferenceProblem.assemble(ctx, problem)
+      prettyNamed("input", p) |: {
         val res = NoFuture.typecheckTerm(p.su(), p.term, p.prototype, p.scope)
 
         prettyNamed("res", res) |: Prop.protect(
           NoFuture.equalTerms(res, p.expected)
         )
       }
-    }}
+    }
   }
 
   // TODO

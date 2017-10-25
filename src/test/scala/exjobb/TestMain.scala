@@ -1,11 +1,11 @@
 package exjobb
 
-import java.util.concurrent.atomic.AtomicBoolean
 import Dol._
-import cell._
+
+import DolGenerators._
 
 /** For debugging. */
-object Main {
+object TestMain {
   import NoFuture._
 
   def main(args: Array[String]): Unit = {
@@ -20,8 +20,6 @@ object Main {
 //debugelim()
 debugtc()
 }
-
-  sealed case class GlobalContext(scope: Scope, nextSymbol: Int)
 
   val pprintTerminalWidth = 78
   val pprintWidth = pprintTerminalWidth
@@ -6933,13 +6931,11 @@ val (GlobalContext(scope, nextSymbol), localScope, killSet, z, a): (GlobalContex
 }
 
 
-case class InferenceProblem2(ctx: GlobalContext, term: Term, prototype: Prototype, expected: Typed.Term)
-
 def debugtc(): Unit = {
 
-val InferenceProblem2(GlobalContext(scope, nextSymbol), term, prototype, expected): InferenceProblem2 =
+val InferenceProblem(GlobalContext(scope, nextSymbol), term, prototype, expected): InferenceProblem =
 
-InferenceProblem2(GlobalContext(Map(0 -> Top), 1), Var(0), Que, Typed.Var(0) :- Top)
+InferenceProblem(GlobalContext(Map(0 -> Top), 1), Var(0), Que, TypedVar(0) :- Top)
 
 //(GlobalContext(Map(1 -> TypeDecl(2,Bot,AndType(Bot,FieldDecl(3,Bot))), 0 -> AndType(TypeProj(1,2),TypeProj(1,2))),4),InferenceProblem(Var(0), Que, Map(), Var(0).withType(AndType(TypeProj(1,2),TypeProj(1,2)))))
 
