@@ -9,7 +9,7 @@ object Main {
   import NoFuture._
 
   def main(args: Array[String]): Unit = {
-lowerdebug()
+//lowerdebug()
 //raisedebug()
 //debugsub()
 //debugvarrename()
@@ -1874,9 +1874,7 @@ P.namedln("simplify(p)", simplify(p))
 
 val scope = scope1 + (z -> a)
 
-val killSet: Set[Symbol] = Set()
-
-val res1 = NoFuture.varLower(scope, r, z, p, killSet)
+val res1 = NoFuture.varLower(scope, r, z, p)
 P.namedln("res1", res1)
 
 
@@ -1890,7 +1888,7 @@ val solveSetVariance = gatherVariance(r, labeledPrototype, Contravariant)
 
 
 //val constraint = gatherConstraints(scope, solveSet, Some(z), labeledPrototype, a)
-val constraint = gatherConstraints(scope, solveSet, killSet, None, labeledPrototype, a)
+val constraint = gatherConstraints(scope, solveSet, None, labeledPrototype, a)
 
 
 //P.namedln("constraint", constraint)
@@ -1991,7 +1989,7 @@ if (res2 != None && !isPrototype(p)) {
 }
 
 def raisedebug(): Unit = {
-val (GlobalContext(scope1, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Symbol, Type, Prototype) =
+val (GlobalContext(globalScope, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Symbol, Type, Prototype) =
 
 //(GlobalContext(Map(), 2), 1, 0, Bot, Top)
 
@@ -3472,28 +3470,73 @@ val (GlobalContext(scope1, nextSymbol), r, z, a, p): (GlobalContext, Symbol, Sym
 //  TypeProj(1, 2)
 //)
 
-( // TODO
+//( // TODO
+//  GlobalContext(
+//    Map(
+//      5 -> TypeDecl(6, RecType(7, Top), RecType(7, Top))
+//    ),
+//    20
+//  ),
+//  1,
+//  0,
+//  TypeProj(5, 6),
+//  RecType(4, TypeProj(5, 6))
+//)
+
+
+( // TODO fun(x: Que)x.T
   GlobalContext(
     Map(
-      5 -> TypeDecl(6, RecType(7, Top), RecType(7, Top))
+      11 -> TypeDecl(12, Bot, Bot),
+      9 -> TypeDecl(10, TypeProj(11, 12), TypeProj(11, 12)),
+      14 -> TypeDecl(15, Bot, Bot),
+      0 -> Top,
+      1 -> Top,
+      6 -> FunType(7, Bot, FieldDecl(8, TypeProj(9, 10))),
+      13 -> TypeProj(14, 15),
+      2 -> RecType(3, FieldDecl(4, TypeDecl(5, Top, Top))),
+      16 -> Bot
     ),
-    20
+    29
   ),
-  1,
-  0,
-  TypeProj(5, 6),
-  RecType(4, TypeProj(5, 6))
+  18,
+  17,
+  FunType(
+    19,
+    AndType(
+      FieldDecl(20, TypeDecl(21, Top, Top)),
+      TypeDecl(
+        22,
+        Bot,
+        AndType(FieldDecl(23, TypeProj(14, 15)), Bot)
+      )
+    ),
+    AndType(
+      FunType(24, TypeProj(19, 22), Bot),
+      FunType(
+        25,
+        FunType(26, RecType(27, Bot), TypeProj(11, 12)),
+        RecType(28, Bot)
+      )
+    )
+  ),
+  FunType(
+    19,
+    Que,
+    AndType(
+      FunType(24, TypeProj(19, 22), Bot),
+      FunType(25, Que, RecType(28, Bot))
+    )
+  )
 )
 
-val scope = scope1 + (z -> unwrapRecTypes(a, z))
+val scope = globalScope + (z -> a)
 
-val killSet: Set[Symbol] = Set()
+//val res1 = NoFuture.varRaise(scope, r, z, p)
+//P.namedln("res1", res1)
 
-val res1 = NoFuture.varRaise(scope, r, z, p, killSet)
-P.namedln("res1", res1)
-
-val res3 = NoFuture.raise(scope, r, None, a, p, killSet)
-P.namedln("res3", res3)
+//val res3 = NoFuture.raise(scope, r, None, a, p)
+//P.namedln("res3", res3)
 
 import NoFuture._
 
@@ -3501,7 +3544,7 @@ val (numQues, labeledPrototype) = prepMatch(r, simplify(p))
 
 val solveSet = (0 until numQues).map{TypeProj(r, _)}.toSet
 
-val constraint = gatherConstraints(scope, solveSet, killSet, Some(z), a, labeledPrototype)
+val constraint = gatherConstraints(scope, solveSet, Some(z), a, labeledPrototype)
 
 
 //P.namedln("constraint", constraint)
@@ -6844,16 +6887,43 @@ P.namedln("res == expected", varEqualTypes(scope + (z -> res.get), z, aLowerType
 
 
 def debugelim(): Unit = {
-  val (GlobalContext(scope, nextSymbol), killSet, z, a): (GlobalContext, Set[Symbol], Symbol, Type) =
+val (GlobalContext(scope, nextSymbol), localScope, killSet, z, a): (GlobalContext, Scope, Set[Symbol], Symbol, Type) =
 
-  (
-    GlobalContext(
-      Map(1 -> TypeDecl(4, Bot, FunType(3, Top, Top))),
-      20),
-    Set(1),
-    0,
-    FunType(3, RecType(5, TypeDecl(4, Bot, TypeProj(1, 4))), TypeProj(3, 4))
-  )
+( // TODO fun(x:rec)x.T --> fun(x: Top)x.T
+  GlobalContext(
+    Map(),
+    20),
+  Map(1 -> TypeDecl(4, Bot, FunType(3, Top, Top))),
+  Set(1),
+  0,
+  FunType(3, RecType(5, TypeDecl(4, FunType(3, Top, Bot), TypeProj(1, 4))), TypeProj(3, 4))
+)
+
+//(
+//  GlobalContext(Map(7 -> TypeDecl(8, Bot, Bot)), 11),
+//  Map(
+//    1 -> FunType(2, TypeDecl(3, Bot, Bot), FunType(4, TypeProj(2, 3), Top))
+//  ),
+//  Set(1),
+//  0,
+//  AndType(
+//    RecType(
+//      5,
+//      AndType(
+//        TypeDecl(6, TypeProj(7, 8), TypeProj(7, 8)),
+//        FieldDecl(9, TypeProj(5, 6))
+//      )
+//    ),
+//    FieldDecl(10, Bot)
+//  )
+//  //RecType(
+//  //  5,
+//  //  AndType(
+//  //    TypeDecl(6, TypeProj(7, 8), TypeProj(7, 8)),
+//  //    FieldDecl(9, TypeProj(5, 6))
+//  //  )
+//  //)
+//)
 
   val res = eliminateVars(scope, killSet, Some(z), a, variance=Contravariant)
   P.namedln("res", res)

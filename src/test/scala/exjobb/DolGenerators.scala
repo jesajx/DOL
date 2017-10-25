@@ -72,7 +72,7 @@ object DolGenerators {
       (argSize, resSize) <- splitSizeNonZero(size - 1)
       (ctx2, x)   <- ctx.newSymbol()
       (ctx3, arg) <- Gen.resize(argSize, genType(ctx2, scope))
-      (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope + (x -> arg)))
+      (ctx4, res) <- Gen.resize(resSize, genType(ctx3, scope + (x -> arg))) // TODO two genSimpleFunType and genComplexFunType that lets res reference arg or not?
     } yield (ctx4, FunType(x, arg, res))
   }
 
@@ -95,6 +95,10 @@ object DolGenerators {
             aPrototype <- genPrototypeFromType(aType)
           } yield FieldDecl(a, aPrototype)
         case TypeDecl(a, aLowerType, aUpperType) =>
+          // TODO If both `lower` and `upper` are prototypes it can lead to
+          // scenarios where different constraint-variables are compared
+          // against each other. It is probably easiest to just forbid this.
+          // But can it occur naturally in the typechecker?
           //for {
           //  (ctx2, aLowerPrototype) <- genPrototypeFromType(ctx, aLowerType)
           //  (ctx3, aUpperPrototype) <- genPrototypeFromType(ctx2, aUpperType)
@@ -113,7 +117,23 @@ object DolGenerators {
             rightPrototype <- genPrototypeFromType(right)
           } yield AndType(leftPrototype, rightPrototype)
         case FunType(x, xType, resType) =>
-          for {
+          if (NoFuture.allFreeVarsInType(resType).contains(x))
+            for {
+              // TODO If `res` references `arg` and `arg` is a prototype it can lead
+              // to scenarios where we compare different constraint variables
+              // against each-other... Not clear how to deal with this. Pierce
+              // & Turner generally forbid constraints A <: B where both A and
+              // B contain unknowns.
+              // Perhaps we should differentiate prototypes from types. For
+              // example `ProtoFun(arg,res)`, such that `res` can't reference
+              // `arg`?
+              // In general this seems to be the case in actual Scala, since
+              // it needs to differentiate method-types from function-types
+              // (since these are treated differently in the JVM).
+              xPrototype <- const(xType)
+              resPrototype <- genPrototypeFromType(resType)
+            } yield FunType(x, xPrototype, resPrototype)
+          else for {
             xPrototype <- genPrototypeFromType(xType)
             resPrototype <- genPrototypeFromType(resType)
           } yield FunType(x, xPrototype, resPrototype)
