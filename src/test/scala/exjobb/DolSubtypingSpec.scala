@@ -89,7 +89,7 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
       (ctx4, a) <- ctx3.newSymbol()
       (ctx5, aUpperType) <- genType(ctx4, Map())
       (ctx6, aLowerType) <- genSubtype(ctx5, Map(), aUpperType)
-      ctx7 <- ctx6.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
+      ctx7 <- ctx6.newBinding(x -> TypeDecl(a, aLowerType, aUpperType))
       // TODO test multiple TypeDecls
       // TODO test inbetween typeprojs
       // TODO test rectypes
@@ -110,7 +110,7 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
       (ctx4, a) <- ctx3.newSymbol()
       (ctx5, aUpperType) <- genType(ctx4, Map())
       (ctx6, aLowerType) <- genSubtype(ctx5, Map(), aUpperType)
-      ctx7 <- ctx6.withBinding(x -> TypeDecl(a, aLowerType, aUpperType))
+      ctx7 <- ctx6.newBinding(x -> TypeDecl(a, aLowerType, aUpperType))
       // TODO gen subtype if the TypeDecl (i.e. obfuscate with unneccessary
       // type info)
       // TODO test multiple TypeDecls
@@ -139,7 +139,7 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
 
       decl1 <- const(TypeDecl(a, aLowerType1, aUpperType1))
       decl2 <- const(TypeDecl(a, aLowerType2, aUpperType2))
-      ctx9 <- ctx8.withBinding(x -> AndType(decl1, decl2))
+      ctx9 <- ctx8.newBinding(x -> AndType(decl1, decl2))
       // TODO test multiple TypeDecls
       // TODO test inbetween typeprojs
       // TODO test rectypes
@@ -309,7 +309,7 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
       (ctx5, localScope) <- genScope(ctx4)
       (ctx6, b) <- genType(ctx5, localScope)
       (ctx7, a) <- genSubtype(ctx6, localScope, b)
-      ctx8      <- ctx7.withBinding(k -> a)
+      ctx8      <- ctx7.newBinding(k -> a)
       p <- genPrototypeFromType(a)
     } yield (ctx8, localScope, r, z, a, b, p)
     Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, r, z, a, b, p) =>

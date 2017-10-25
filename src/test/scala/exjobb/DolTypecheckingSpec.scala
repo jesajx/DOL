@@ -73,29 +73,26 @@ object DolTypecheckingSpec extends Properties("DolTypecheckingSpec") { // TODO R
   // TODO if x does not typecheck, then f(x) should not typecheck either.
 
   property("positiveSequentialInferenceProblem") = {
-    val generator: Gen[(GlobalContext, InferenceProblem)] = for{
+    val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
       ctx1  <- genGlobalScope()
       (ctx2, problem) <- genInferenceProblem(ctx1, Map())
     } yield (ctx2, problem)
-    //def shrink(tuple: (GlobalContext, InferenceProblem)): Stream[(GlobalContext, InferenceProblem)] = {
-    //  val (su, problem) = tuple
-    //  shrinkInferenceProblem(su, problem, isRoot=true).map{newProblem => (su, newProblem)}
+    //def shrink(tuple: (GlobalContext, InferenceProblem.Term)): Stream[(GlobalContext, InferenceProblem)] = {
+    //  val (ctx, problem) = tuple
+    //  shrinkInferenceProblem(ctx, problem, isRoot=true)
     //}
-    //Prop.forAllShrink(generator, shrink){prettyProp{ case (ctx, problem) =>
-    Prop.forAll(generator){prettyProp{ case (ctx, problem) =>
-      val su = new SymbolUniverse(ctx.nextSymbol)
-      val res = typecheckSequentially(su, problem.term, problem.prototype, ctx.globalScope ++ problem.scope)
+    //Prop.forAllShrink(generator, shrink){ case (ctx, problem) =>
+    Prop.forAll(generator){prettyProp{case (ctx, problem) =>
+      Prop.protect {
+        val p = InferenceProblem.assemble(ctx, problem)
+        val res = NoFuture.typecheckTerm(p.su(), p.term, p.prototype, p.scope)
 
-      val resString = res match {
-        case Some(resTerm) => s"res = Some(${NoFuture.stringExprWithTypeIfExists(resTerm)})"
-        case None => "res = None"
+        prettyNamed("res", res) |: Prop.protect(
+          NoFuture.equalTerms(res, p.expected)
+        )
       }
-
-      resString |: Prop.all(
-        res != None && NoFuture.equalTerms(su,problem.scope, res.get, problem.expected)
-      )
-    }
-  }}
+    }}
+  }
 
   // TODO
 //  property("positiveParallelInferenceProblem") = {

@@ -17,7 +17,8 @@ object Main {
 //debuglub3()
 //debuglubmin()
 //debugproj()
-debugelim()
+//debugelim()
+debugtc()
 }
 
   sealed case class GlobalContext(scope: Scope, nextSymbol: Int)
@@ -6932,14 +6933,51 @@ val (GlobalContext(scope, nextSymbol), localScope, killSet, z, a): (GlobalContex
 }
 
 
+case class InferenceProblem2(ctx: GlobalContext, term: Term, prototype: Prototype, expected: Typed.Term)
+
+def debugtc(): Unit = {
+
+val InferenceProblem2(GlobalContext(scope, nextSymbol), term, prototype, expected): InferenceProblem2 =
+
+InferenceProblem2(GlobalContext(Map(0 -> Top), 1), Var(0), Que, Typed.Var(0) :- Top)
+
+//(GlobalContext(Map(1 -> TypeDecl(2,Bot,AndType(Bot,FieldDecl(3,Bot))), 0 -> AndType(TypeProj(1,2),TypeProj(1,2))),4),InferenceProblem(Var(0), Que, Map(), Var(0).withType(AndType(TypeProj(1,2),TypeProj(1,2)))))
+
+//(GlobalContext(Map(0 -> FunType(2,Top,AndType(AndType(TypeProj(3,4),FieldDecl(7,Top)),FieldDecl(8,Bot))), 5 -> TypeDecl(6,Bot,Bot), 14 -> TypeDecl(15,TypeProj(5,6),TypeProj(5,6)), 1 -> TypeProj(9,10), 9 -> TypeDecl(10,FieldDecl(11,TypeProj(16,17)),FieldDecl(11,AndType(RecType(12,TypeProj(3,4)),RecType(13,TypeProj(14,15))))), 3 -> TypeDecl(4,Bot,TypeProj(5,6)), 16 -> TypeDecl(17,Bot,Bot)),18),InferenceProblem(App(0,1), Que, Map(), App(0,1).withType(AndType(AndType(TypeProj(3,4),FieldDecl(7,Top)),FieldDecl(8,Bot)))))
+
+//(
+//  GlobalContext(Map(8 -> TypeDecl(9,Bot,FieldDecl(10,Top)), 5 -> TypeDecl(6,AndType(TypeDecl(7,Bot,Bot),TypeProj(8,9)),TypeDecl(7,Bot,Bot)), 3 -> RecType(4,TypeProj(5,6))),12),
+//  InferenceProblem(
+//    Obj(0, AndType(FieldDecl(1,RecType(4,TypeProj(5,6))),FieldDecl(11,RecType(4,TypeProj(5,6)))),AndDef(FieldDef(1,Let(2,Var(3),Var(2))),FieldDef(11,Sel(0,1)))),
+//    Que,
+//    Map(),
+//    Obj(0, AndType(FieldDecl(1,RecType(4,TypeProj(5,6))),FieldDecl(11,RecType(4,TypeProj(5,6)))), AndDef(FieldDef(1, Let(2, Var(3).withType(RecType(4,TypeProj(5,6))), Var(2).withType(RecType(4,TypeProj(5,6)))).withType(RecType(4,TypeProj(5,6)))).withType(FieldDecl(1,RecType(4,TypeProj(5,6)))), FieldDef(11, Sel(0,1).withType(RecType(4,TypeProj(5,6)))).withType(FieldDecl(11,RecType(4,TypeProj(5,6))))).withType(AndType(FieldDecl(1,RecType(4,TypeProj(5,6))),FieldDecl(11,RecType(4,TypeProj(5,6)))))).withType(AndType(FieldDecl(1,RecType(4,TypeProj(5,6))),FieldDecl(11,RecType(4,TypeProj(5,6))))))
+//)
+
+//(
+//  GlobalContext(Map(8 -> TypeDecl(9,Bot,FieldDecl(10,Top)), 5 -> TypeDecl(6,AndType(TypeDecl(7,Bot,Bot),TypeProj(8,9)),TypeDecl(7,Bot,Bot)), 3 -> RecType(4,TypeProj(5,6))),12),
+//  InferenceProblem(
+//    Let(2,Var(3),Var(2)),
+//    Que,
+//    Map(),
+//    Let(2, Var(3).withType(RecType(4,TypeProj(5,6))), Var(2).withType(RecType(4,TypeProj(5,6)))).withType(RecType(4,TypeProj(5,6)))
+//  )
+//)
+
+val su = new SymbolUniverse(nextSymbol)
+
+P.namedln("scope", scope)
+P.namedln("term", term)
+P.namedln("expected", expected)
+
+val resTerm = typecheckTerm(su, term, prototype, scope)
+
+P.namedln("resTerm", resTerm)
 
 
+P.namedln("res == expected", equalTerms(resTerm, expected))
 
-
-
-
-
-
+}
 
 
 

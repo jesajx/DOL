@@ -26,7 +26,7 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
     }
   }
 
-  //includeMatching(DolTypecheckingSpec, ".*")
+  includeMatching(DolTypecheckingSpec, ".*")
   //includeMatching(DolSubtypingSpec, ".*varRaise.*")
   //includeMatching(DolSubtypingSpec, ".*varLower.*")
   //includeMatching(DolSubtypingSpec, ".*varIsSubtypeOf.*")
@@ -34,7 +34,7 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
   //includeMatching(DolSubtypingSpec, ".*simplify.*")
   //includeMatching(DolSubtypingSpec, ".*"+java.util.regex.Pattern.quote("NoFuture.leastCommonSupertype -- a <: c, b <: c ==> lub(a, b) <: c"))
 
-  includeMatching(DolSubtypingSpec, ".*elim.*")
+  //includeMatching(DolSubtypingSpec, ".*elim.*")
   //includeMatching(DolSubtypingSpec, ".*"+java.util.regex.Pattern.quote("NoFuture.eliminateVars -- validInScope: elimDown(a, S)"))
 
 

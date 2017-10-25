@@ -63,98 +63,57 @@ object Dol {
 
 
   sealed trait Tree {
-    type ThisType <: Tree // TODO = this.type?
     val treeHeight: Int
     val totNumNodes: Int
     // TODO
   }
-  sealed trait Expr extends Tree {
-    @volatile var assignedTypeOption: Option[Type] = None // TODO does it need to be volatile? // TODO vs trait TypedExpr?
-
-    type ThisType <: Expr
-    def withTypeOption(typeOption: Option[Type]): ThisType
-
-    def withType(typ: Type): ThisType = withTypeOption(Some(typ))
-    def assignedType = assignedTypeOption.get
-
-    def withTypeOptionHelper[E <: Expr](clonedExpr: E, typeOption: Option[Type]): E = {clonedExpr.assignedTypeOption = typeOption; clonedExpr}
-  }
-  sealed trait Term  extends Expr {
-    type ThisType <: Term
-  }
-  sealed trait Value extends Term {
-    type ThisType <: Value
-  }
-  sealed trait Type  extends Tree {
-    type ThisType <: Type
-  }
-  sealed trait Def   extends Expr {
-    type ThisType <: Def
-  }
+  sealed trait Expr extends Tree
+  sealed trait Term  extends Expr
+  sealed trait Value extends Term
+  sealed trait Type  extends Tree
+  sealed trait Def   extends Expr
 
 
   // Term ::=
   case class Var(x: Symbol) extends Term {
-    type ThisType = Var
     val treeHeight = 1
     val totNumNodes = 1
-    def withTypeOption(typeOption: Option[Type]) = {
-      val res = this.copy()
-      res.assignedTypeOption = typeOption
-      res
-    }
   }
   case class App(x: Symbol, y: Symbol) extends Term {
-    type ThisType = App
     val treeHeight = 1
     val totNumNodes = 1
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   final case class Let(x: Symbol, xTerm: Term, resTerm: Term) extends Term {
-    type ThisType = Let
     val treeHeight = 1 + math.max(xTerm.treeHeight, resTerm.treeHeight)
     val totNumNodes = 1 + xTerm.totNumNodes + resTerm.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class Sel(x: Symbol, a: Symbol) extends Term {
-    type ThisType = Sel
     val treeHeight = 1
     val totNumNodes = 1
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
 
   // Value ::=
   case class Obj(x: Symbol, xType: Type, body: Def) extends Value {
-    type ThisType = Obj
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class Fun(x: Symbol, xType: Type, body: Term) extends Value {
-    type ThisType = Fun
     val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
 
   // Def ::=
   case class FieldDef(a: Symbol, aTerm: Term) extends Def {
-    type ThisType = FieldDef
     val treeHeight = 1 + aTerm.treeHeight
     val totNumNodes = 1 + aTerm.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class TypeDef(a: Symbol, aType: Type) extends Def {
-    type ThisType = TypeDef
     val treeHeight = 1 + aType.treeHeight
     val totNumNodes = 1 + aType.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
   case class AndDef(left: Def, right: Def)  extends Def {
-    type ThisType = AndDef
     val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
     val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
-    def withTypeOption(typeOption: Option[Type]) = withTypeOptionHelper(copy(), typeOption)
   }
 
   // DOL Extensions to DOT // TODO
@@ -169,45 +128,79 @@ object Dol {
 
   // Type ::=
   case object Bot extends Type {
-    type ThisType = Bot.type
     val treeHeight = 1
     val totNumNodes = 1
   }
   case object Top extends Type {
-    type ThisType = Top.type
     val treeHeight = 1
     val totNumNodes = 1
   }
   case class TypeProj(x: Symbol, a: Symbol) extends Type {
-    type ThisType = TypeProj
     val treeHeight = 1
     val totNumNodes = 1
   }
   case class FunType(x: Symbol, xType: Type, resType: Type) extends Type {
-    type ThisType = FunType
     val treeHeight = 1 + math.max(xType.treeHeight, resType.treeHeight)
     val totNumNodes = 1 + xType.totNumNodes + resType.totNumNodes
   }
   case class RecType(x: Symbol, xType: Type) extends Type {
-    type ThisType = RecType
     val treeHeight = 1 + xType.treeHeight
     val totNumNodes = 1 + xType.totNumNodes
   }
   case class AndType(left: Type, right: Type) extends Type {
-    type ThisType = AndType
     val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
     val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
   }
   case class FieldDecl(a: Symbol, aType: Type) extends Type {
-    type ThisType = FieldDecl
     val treeHeight = 1 + aType.treeHeight
     val totNumNodes = 1 + aType.totNumNodes
   }
   case class TypeDecl(a: Symbol, aLowerType: Type, aUpperType: Type) extends Type {
-    type ThisType = TypeDecl
     val treeHeight = 1 + math.max(aLowerType.treeHeight, aUpperType.treeHeight)
     val totNumNodes = 1 + aLowerType.treeHeight + aUpperType.treeHeight
   }
+
+
+  object Typed {
+    sealed case class Term(term: Typed.InnerTerm, typ: Type)
+    sealed case class Def(d: Typed.InnerDef, typ: Type)
+
+    sealed trait InnerTerm {
+      def :-(typ: Type) = Typed.Term(this, typ)
+    }
+    case class Var(x: Symbol)                                         extends Typed.InnerTerm
+    case class App(x: Symbol, y: Symbol)                              extends Typed.InnerTerm
+    case class Let(x: Symbol, xTerm: Typed.Term, resTerm: Typed.Term) extends Typed.InnerTerm
+    case class Sel(x: Symbol, a: Symbol)                              extends Typed.InnerTerm
+    case class Fun(x: Symbol, xType: Type, body: Typed.Term)          extends Typed.InnerTerm
+    case class Obj(x: Symbol, xType: Type, body: Typed.Def)           extends Typed.InnerTerm
+
+    sealed trait InnerDef {
+      def :-(typ: Type) = Typed.Def(this, typ)
+    }
+    case class FieldDef(a: Symbol, aTerm: Typed.Term)    extends Typed.InnerDef
+    case class TypeDef(a: Symbol, aType: Type)           extends Typed.InnerDef
+    case class AndDef(left: Typed.Def, right: Typed.Def) extends Typed.InnerDef
+  }
+
+  object :- {
+    def unapply(t: Typed.Term): Option[(Typed.InnerTerm, Type)] = Some((t.term, t.typ))
+    def unapply(t: Typed.Def): Option[(Typed.InnerDef, Type)] = Some((t.d, t.typ))
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   sealed trait Variance
   case object Covariant extends Variance
@@ -753,7 +746,7 @@ object Dol {
      * TypeDecl(a, A, B)`, then `Let(x, t1, t2): B`.
      */
     def eliminateVars(scope: Scope, killSet: Set[Symbol], zOption: Option[Symbol], typ: Type, variance: Variance = Covariant, visited: Set[TypeProj] = Set(), changedVars: Map[Symbol, Type] = Map()): Type = {
-      if (zOption != None && killSet(zOption.get)) {
+      if (zOption != None && killSet(zOption.get) && allFreeVarsInType(typ).contains(zOption.get)) { // TODO bad?
         val z = zOption.get
         val zType = eliminateVars(scope, killSet - z, zOption, typ, variance, visited, changedVars) // TODO inner zOption = None?
         RecType(z, zType)
@@ -831,29 +824,26 @@ object Dol {
 
     def error() = {throw new TypecheckingError(); ErrorType}
 
-    def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): TypedTerm = (term, prototype) match {
+    def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): Typed.Term = (term, prototype) match {
       case (Var(x), p) =>
-        term.withType{
-          varRaise(scope, su.newSymbol(), x, p) match {
-            case Some(res) => simplify(res)
-            case None => ???; ErrorType
-          }
-        }
+        Typed.Var(x) :- (varRaise(scope, su.newSymbol(), x, p) match {
+          case Some(res) => simplify(res)
+          case None => ???; ErrorType
+        })
       case (Let(x, xTerm, resTerm), p) =>
         if (scope.contains(x)) ??? // TODO rename
         val typedXTerm   = typecheckTerm(su, xTerm, Que, scope)
-        val xType        = typedXTerm.assignedType
-        val typedResTerm = typecheckTerm(su, resTerm, p, scope + (x -> xType))
+        val typedResTerm = typecheckTerm(su, resTerm, p, scope + (x -> typedXTerm.typ))
 
         val zOption = typedResTerm match {
-          case Var(z) => Some(z)
+          case (Typed.Var(z) :- _) => Some(z)
           case _ => None
         }
-        val letType = eliminateVars(scope, Set(x), zOption, typedResTerm.assignedType)
-        Let(x, typedXTerm, typedResTerm).withType(letType)
+        val letType = eliminateVars(scope, Set(x), zOption, typedResTerm.typ)
+        Typed.Let(x, typedXTerm, typedResTerm) :- letType
       case (Sel(x, a), p) =>
-        term.withType {
-          typecheckTerm(su, Var(x), FieldDecl(a, p), scope).assignedType match {
+        Typed.Sel(x, a) :- {
+          typecheckTerm(su, Var(x), FieldDecl(a, p), scope).typ match {
             case FieldDecl(b, bType) if a == b =>
               bType
             case _ =>
@@ -862,11 +852,11 @@ object Dol {
         }
       case (App(x, y), p) =>
         val z = su.newSymbol()
-        term.withType{
-          typecheckTerm(su, Var(x), FunType(z, Que, p), scope).assignedType match {
+        Typed.App(x, y) :- {
+          typecheckTerm(su, Var(x), FunType(z, Que, p), scope).typ match {
             case FunType(w, zType, zResType) if w == z =>
               if (scope.contains(z)) ??? // TODO rename
-              val yType = typecheckTerm(su, Var(y), zType, scope).assignedType
+              val yType = typecheckTerm(su, Var(y), zType, scope).typ
               typeRenameVar(z, y, zResType)
               //raise(scope, su.newSymbol(), None, typeRenameVar(z, y, zResType), p) match {
               //  case Some(res) => res
@@ -881,31 +871,28 @@ object Dol {
       case (Fun(x, _, _), Top) =>
         typecheckTerm(su, term, FunType(x, Bot, Top), scope)
       case (Fun(x, _, _), FunType(y, _, _)) if x != y =>
-        val typedTerm = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope)
-        val typ = typedTerm.assignedType
-        typedTerm.withType(typeRenameBoundVarAssumingNonFree(y, typ))
+        val (typedTerm :- typ) = typecheckTerm(su, term, typeRenameBoundVarAssumingNonFree(x, prototype), scope)
+        typedTerm :- typeRenameBoundVarAssumingNonFree(y, typ)
       case (Fun(x, xType, resTerm), FunType(y, argPrototype, resPrototype)) if x == y =>
         // TODO Is it fine to do lower/raise of arg and res separately? Or is
         // it necessary to do one call to raise at the end using the whole
         // prototype?
         varLower(scope + (x -> xType), su.newSymbol(), x, argPrototype) match { // TODO bad to use (x -> xType) instead of (x -> yType)?
           case None =>
-            term.withType(error())
+            throw new TypecheckingError(s"fail lower($x, $xType, $argPrototype)")
           case Some(loweredXType) =>
             val localScope = scope + (x -> xType) // TODO xType vs loweredXType? what happens if loweredXType is Bot? special case that?
             val typedResTerm = typecheckTerm(su, resTerm, resPrototype, localScope)
-            val resType = typedResTerm.assignedType
-            Fun(x, loweredXType, typedResTerm).withType(FunType(x, loweredXType, resType))
+            Typed.Fun(x, xType, typedResTerm) :- FunType(x, loweredXType, typedResTerm.typ)
         }
       case (Obj(x, xType, defs), p) =>
         val localScope = scope + (x -> xType)
         // TODO check that there are no duplicatesd
-        def typecheckDef(d: Def): Def = d match {
+        def typecheckDef(d: Def): Typed.Def = d match {
           case AndDef(left, right) =>
-            val typedLeft = typecheckDef(left)
+            val typedLeft  = typecheckDef(left)
             val typedRight = typecheckDef(right)
-            val typ = AndType(typedLeft.assignedType, typedRight.assignedType)
-            AndDef(typedLeft, typedRight).withType(typ)
+            Typed.AndDef(typedLeft, typedRight) :- AndType(typedLeft.typ, typedRight.typ)
           case FieldDef(a, aTerm) =>
             val aPrototype = raise(scope, su.newSymbol(), None, xType, FieldDecl(a, Que)) match {
               case Some(FieldDecl(b, bPrototype)) if a == b => bPrototype
@@ -913,7 +900,7 @@ object Dol {
               case _ => error()
             }
             val aTypedTerm = typecheckTerm(su, aTerm, aPrototype, localScope)
-            FieldDef(a, aTypedTerm).withType(FieldDecl(a, aTypedTerm.assignedType))
+            Typed.FieldDef(a, aTypedTerm) :- FieldDecl(a, aTypedTerm.typ)
           case TypeDef(a, aType) =>
             val typ = TypeDecl(a, aType, aType)
             val declPrototype = raise(scope, su.newSymbol(), None, xType, TypeDecl(a, Que, Que)) match {
@@ -925,25 +912,28 @@ object Dol {
               case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
               case _ => error()
             }
-            d.withType(myType)
-          case _ => d.withType(error()) // complains about DefFuture.
+            Typed.TypeDef(a, aType) :- myType
+          case _ => ??? // complains about DefFuture.
         }
         // TODO check everything in xType is in defs
 
         if (defHasDuplicates(defs)) {
-          term.withType(error())
+          throw new TypecheckingError("duplicate defs")
         } else {
           val typedDefs = typecheckDef(defs)
-          if (!varIsSubtypeOf(scope + (x -> typedDefs.assignedType), x, xType)) {
-            term.withType(error())
-          } else {
-            val raisedType = varRaise(scope + (x -> xType), su.newSymbol(), x, p).getOrElse{error()}
-            Obj(x, xType, typedDefs).withType(raisedType)
+          if (!varIsSubtypeOf(scope + (x -> typedDefs.typ), x, xType)) {
+            throw new TypecheckingError(s"not: ${typedDefs.typ} <: $xType")
+          }
+          varRaise(scope + (x -> xType), su.newSymbol(), x, p) match {
+            case Some(typ) =>
+              Typed.Obj(x, xType, typedDefs) :- typ
+            case None =>
+              throw new TypecheckingError(s"fail raise($x, ${typedDefs.typ}, $p)")
           }
         }
       // TODO DOL extensions to DOT
       case _ =>
-        term.withType(error())
+        ???
     }
 
     def typeRenameVar(fromVar: Symbol, toVar: Symbol, typ: Type): Type = typ match {
@@ -1065,51 +1055,67 @@ object Dol {
 
     //def exactEqualTypes(first: Type, second: Type) = (first == second)
 
-    def equalDefs(su: SymbolUniverse, scope: Scope, first: Def, second: Def): Boolean = {
-      if (defHasDuplicates(first)) ???
-      if (defHasDuplicates(second)) ???
-      val firstMap = defAsMap(first)
-      val secondMap = defAsMap(second)
 
-      (firstMap.keys == secondMap.keys
-        && mapIntersect(firstMap, secondMap){
-          case (FieldDef(a, aTerm), FieldDef(b, bTerm)) if a == b => equalTerms(su, scope, aTerm, bTerm)
-          case (TypeDef(a, aType), TypeDef(b, bType)) if a == b   => equalTypesOLD(su, scope, aType, bType)
-          case _ => false
-        }.values.forall{(x: Boolean) => x})
+    /** Check if `first` and `second` are equal.
+     *
+     * The difference from `first == second` is that all assigned types
+     * (including those of nested defs) are compared like:
+     * `rigidEqualTypes(first.typ, second.typ)`.
+     */
+    def equalDefs(first: Typed.Def, second: Typed.Def): Boolean = {
+      val (leftDef :- leftType)   = first
+      val (rightDef :- rightType) = second
+      val typesAreEqual = rigidEqualTypes(leftType, rightType)
+      val defsAreEqual = (leftDef, rightDef) match {
+        case (Typed.AndDef(l1, r1), Typed.AndDef(l2, r2)) =>
+          (equalDefs(l1, l2) && equalDefs(r1, r2))
+        case (Typed.FieldDef(a, aTerm), Typed.FieldDef(b, bTerm)) =>
+          (a == b && equalTerms(aTerm, bTerm))
+        case _ => // TypeDef and mismatched
+          (leftDef == rightDef)
+      }
+      (defsAreEqual && typesAreEqual)
+      //if (defHasDuplicates(first)) ???
+      //if (defHasDuplicates(second)) ???
+      //val firstMap  = defAsMap(first)
+      //val secondMap = defAsMap(second)
+
+      //(firstMap.keys == secondMap.keys
+      //  && mapIntersect(firstMap, secondMap){
+      //    case (Typed.FieldDef(a, aTerm), Typed.FieldDef(b, bTerm)) if a == b => (a == b && equalTerms(aTerm, bTerm))
+      //    case (Typed.TypeDef(a, aType), Typed.TypeDef(b, bType)) if a == b   => (a == b && rigidEqualTypes(aType, bType))
+      //    case _ => false
+      //  }.values.forall{(x: Boolean) => x})
     }
 
-    // TODO
-    def equalTerms(su: SymbolUniverse, scope: Scope, first: Term, second: Term): Boolean = {
-      val assignedTypesEqual = (for {
-        firstType <- first.assignedTypeOption
-        secondType <- second.assignedTypeOption
-      } yield equalTypesOLD(su, scope, firstType, secondType)).getOrElse(false)
-
-      assignedTypesEqual && ((first, second) match {
-        case (Var(_), Var(_))       => (first == second)
-        case (App(_, _), App(_, _)) => (first == second)
-        case (Sel(_, _), Sel(_, _)) => (first == second)
-        case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x == y =>
-          (equalTerms(su, scope, xTerm, yTerm)
-            && equalTerms(su, scope, xResTerm, yResTerm))
-        case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x == y =>
-          (equalTypesOLD(su, scope, xType, yType)
-            && equalDefs(su, scope, xBody, yBody))
-        case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x == y =>
-          (equalTypesOLD(su, scope, xType, yType)
-            && equalTerms(su, scope, xBody, yBody))
-        case (Let(x, xTerm, xResTerm), Let(y, yTerm, yResTerm)) if x != y =>
-          equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
-        case (Obj(x, xType, xBody), Obj(y, yType, yBody)) if x != y =>
-          equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
-        case (Fun(x, xType, xBody), Fun(y, yType, yBody)) if x != y =>
-          equalTerms(su, scope, first, NoFuture.termRenameBoundVarAssumingNonFree(x, second))
-        case _ =>
-          false
-      })
+    /** Check if `first` and `second` are equal.
+     *
+     * The difference from `first == second` is that all assigned types
+     * (including those of nested terms) are compared like:
+     * `rigidEqualTypes(first.typ, second.typ)`.
+     * Any other types (e.g. `T` in `Typed.Fun(x, T, res) :- F`),
+     * are compared with `==`.
+     *
+     * This function is mainly used for testing `typecheckTerm` and (i.e. the
+     * input term is not "changed", only annotate with a type).
+     *
+     */
+    def equalTerms(first: Typed.Term, second: Typed.Term): Boolean = {
+      val (leftTerm :- leftType) = first
+      val (rightTerm :- rightType) = second
+      val theTypesAreEqual = rigidEqualTypes(leftType, rightType) // TODO vs subtyping-equal?
+      val theTermsAreEqual = (leftTerm, rightTerm) match {
+        case (Typed.Let(x, xTerm, xResTerm), Typed.Let(y, yTerm, yResTerm)) =>
+          (x == y && equalTerms(xTerm, yTerm) && equalTerms(xResTerm, yResTerm))
+        case (Typed.Obj(x, xType, xBody), Typed.Obj(y, yType, yBody)) =>
+          (x == y && (xType == yType) && equalDefs(xBody, yBody))
+        case (Typed.Fun(x, xType, xBody), Typed.Fun(y, yType, yBody)) =>
+          (x == y && (xType == yType) && equalTerms(xBody, yBody))
+        case _ => // Var, App, Sel and mismatched
+          (leftTerm == rightTerm)
+      }
+      (theTermsAreEqual && theTypesAreEqual)
     }
-
 
     // TODO def hasNestedRecursiveTypes(scope: Scope, x: Symbol)?
     // TODO def validType?
@@ -1826,35 +1832,6 @@ object Dol {
       case _ => Set()
     }
 
-    def stringExprWithType(expr: Expr): String = {
-      val s = expr match {
-        case Let(x, xTerm, resTerm) => s"Let($x, ${stringExprWithType(xTerm)}, ${stringExprWithType(resTerm)})"
-        case Obj(x, xType, d)       => s"Obj($x, $xType, ${stringExprWithType(d)})"
-        case Fun(x, xType, resTerm) => s"Fun($x, $xType, ${stringExprWithType(resTerm)})"
-        case FieldDef(a, aTerm)     => s"FieldDef($a, ${stringExprWithType(aTerm)})"
-        case AndDef(left, right)    => s"AndDef(${stringExprWithType(left)}, ${stringExprWithType(right)})"
-        case _ => s"$expr"
-      }
-      s"$s.withTypeOption(${expr.assignedTypeOption})"
-    }
-
-    def stringExprWithTypeIfExists(expr: Expr): String = {
-      val s = expr match {
-        case Let(x, xTerm, resTerm) => s"Let($x, ${stringExprWithTypeIfExists(xTerm)}, ${stringExprWithTypeIfExists(resTerm)})"
-        case Obj(x, xType, d)       => s"Obj($x, $xType, ${stringExprWithTypeIfExists(d)})"
-        case Fun(x, xType, resTerm) => s"Fun($x, $xType, ${stringExprWithTypeIfExists(resTerm)})"
-        case FieldDef(a, aTerm)     => s"FieldDef($a, ${stringExprWithTypeIfExists(aTerm)})"
-        case AndDef(left, right)    => s"AndDef(${stringExprWithTypeIfExists(left)}, ${stringExprWithTypeIfExists(right)})"
-        case _ => s"$expr"
-      }
-      expr.assignedTypeOption match {
-        case Some(typ) =>
-          s"$s.withType($typ)"
-        case None =>
-          s
-      }
-    }
-
     def directFieldDecls(scope: Scope, x: Symbol): Map[SymbolPath, Type] = {
       def inner(scope: Scope, path: SymbolPath, typ: Type, visited: Set[TypeProj]): Map[SymbolPath, Type] = typ match {
         case AndType(left, right) =>
@@ -1922,18 +1899,15 @@ object Dol {
 
   type Prototype = Type
   case object Que extends Prototype {
-    type ThisType = Que.type
     val treeHeight = 1
     val totNumNodes = 1
   }
 
   case object ErrorType extends Type { // TODO vs some other errorhandling?
-    type ThisType = ErrorType.type
     val treeHeight = 1
     val totNumNodes = 1
   }
   case class FutureType(cell: DefaultCell[Type]) extends Type {
-    type ThisType = FutureType
     val treeHeight = 1
     val totNumNodes = 1
     // TODO approximations
@@ -2209,348 +2183,337 @@ object Dol {
   }
 
   case class Parallel(val symbolUniverse: SymbolUniverse, val pool: HandlerPool, val hasErrorsAtom:  AtomicBoolean) {
-    // TODO smarter futureType that does not always fork? e.g. r(..., asFutureTypePlease=true) and chooses to make a future or not
-
-    def launch(f: => Unit) {
-      pool.execute{() => f}
-    }
-
-    def contCell[T](lattice: Lattice[T])(f: (T => Unit) => Unit): DefaultCell[T] = {
-      val completer = newCellCompleter(pool, lattice)
-      launch {
-        f {res =>
-            completer.putFinal(res)
-        }
-        // TODO catch and rethrow exceptions? should probably not call error()
-        // since we are not expecting errors. --- WHAT?
-      }
-      completer.cell
-    }
-
-    def contZipFork[A >: Null, B >: Null](a: (A => Unit) => Unit, b: (B => Unit) => Unit)(cont: (A, B) => Unit): Unit = { // TODO test
-      val aCell = contCell(Lattice.trivial[A])(a)
-      val bCell = contCell(Lattice.trivial[B])(b)
-      onComplete(aCell) {aRes =>
-        onComplete(bCell) {bRes =>
-          cont(aRes, bRes)
-        }
-      }
-    }
-
-    def futureType(f: ((Type) => Unit) => Unit): Type = {
-      FutureType(contCell(Lattice.trivial[Type])(f))
-    }
-
-
-    def expandTermFutures(term: Term)(cont: (Term) => Unit): Unit = term match {
-      case TermFuture(cell) =>
-        onComplete(cell){
-          expandTermFutures(_)(cont)
-        }
-      case _ =>
-        def expandAssignedType(t: Term)(c: (Term) => Unit): Unit = {
-          t.assignedTypeOption match {
-            case Some(termType) =>
-              expandTypeFutures(termType){termType =>
-                c(t.withType(termType))
-              }
-            case None =>
-              c(t)
-          }
-        }
-
-        term match {
-          case Let(x, xTerm, resTerm) =>
-            expandTermFutures(xTerm){xTerm =>
-              expandTermFutures(resTerm){resTerm =>
-                expandAssignedType(Let(x, xTerm, resTerm).withTypeOption(term.assignedTypeOption))(cont)
-              }
-            }
-          case Obj(x, xType, body) =>
-            expandTypeFutures(xType){xType =>
-              expandDefFutures(body){body =>
-                expandAssignedType(Obj(x, xType, body).withTypeOption(term.assignedTypeOption))(cont)
-              }
-            }
-          case Fun(x, xType, body) =>
-            expandTypeFutures(xType){xType =>
-              expandTermFutures(body){body =>
-                expandAssignedType(Fun(x, xType, body).withTypeOption(term.assignedTypeOption))(cont)
-              }
-            }
-          case _ => // Var, App, Sel
-            expandAssignedType(term)(cont)
-        }
-    }
-
-    def expandDefFutures(d: Def)(cont: (Def) => Unit): Unit = d match {
-      case DefFuture(cell) =>
-        onComplete(cell){
-          expandDefFutures(_)(cont)
-        }
-      case _ =>
-        def expandAssignedType(d2: Def)(c: (Def) => Unit): Unit = {
-          d2.assignedTypeOption match {
-            case Some(termType) =>
-              expandTypeFutures(termType){termType =>
-                c(d2.withType(termType))
-              }
-            case None =>
-              c(d2)
-          }
-        }
-        d match {
-          case FieldDef(a, aTerm) =>
-            expandTermFutures(aTerm){aTerm =>
-              expandAssignedType(FieldDef(a, aTerm).withTypeOption(d.assignedTypeOption))(cont)
-            }
-          case AndDef(left, right) =>
-            expandDefFutures(left){left =>
-              expandDefFutures(right){right =>
-                expandAssignedType(AndDef(left, right).withTypeOption(d.assignedTypeOption))(cont)
-              }
-            }
-          case TypeDef(a, aType) =>
-            expandTypeFutures(aType){aType =>
-              expandAssignedType(TypeDef(a, aType).withTypeOption(d.assignedTypeOption))(cont)
-            }
-          case _ =>
-            ???
-        }
-    }
-
-
-    def contFold[A](first: ((A) => Unit) => Unit, seq: List[((A) => Unit) => Unit])(f: (A, A) => ((A) => Unit) => Unit)(cont: (A) => Unit): Unit = {
-      seq match {
-        case second :: rest =>
-          first {firstRes =>
-            second {secondRes =>
-              contFold(f(firstRes, secondRes), rest)(f)(cont)
-            }
-          }
-        case Nil => first(cont)
-      }
-    }
-
-    // TODO contCommutativeAssociativeReduce
-    def contReduce[A](seq: List[((A) => Unit) => Unit])(f: (A, A) => ((A) => Unit) => Unit)(cont: (A) => Unit): Unit = {
-      seq match {
-        case Nil => throw new UnsupportedOperationException()
-        case first :: rest =>
-          contFold(first, rest)(f)(cont)
-      }
-    }
-
-
-    def renameToUniqueVar(fromVar: Symbol, toVar: Symbol, t: Type)(cont: (Type) => Unit): Unit = t match {
-      case FutureType(cell) =>
-        onComplete(cell){actualT =>
-          renameToUniqueVar(fromVar, toVar, actualT)(cont)
-        }
-      case TypeProj(x, a) if x == fromVar =>
-        cont(TypeProj(toVar, a))
-      case FunType(x, xType, resType) if x != fromVar =>
-        // TODO assert(x != toVar)
-        val lazyRenamedXType = futureType{
-          renameToUniqueVar(fromVar, toVar, xType)(_)
-        }
-        val lazyRenamedResType = futureType{
-          renameToUniqueVar(fromVar, toVar, resType)(_)
-        }
-        cont(FunType(x, lazyRenamedXType, lazyRenamedResType))
-      case RecType(x, xType) if x != fromVar =>
-        // TODO assert(x != toVar)
-        val lazyRenamedXType = futureType{
-          renameToUniqueVar(fromVar, toVar, xType)(_)
-        }
-        cont(RecType(x, lazyRenamedXType)) // TODO vs non-lazy?
-      case FieldDecl(a, aType) =>
-        val lazyRenamedAType = futureType{
-          renameToUniqueVar(fromVar, toVar, aType)(_)
-        }
-        cont(FieldDecl(a, lazyRenamedAType)) // TODO vs non-lazy?
-      case TypeDecl(a, aLowerType, aUpperType) =>
-        val lazyRenamedALowerType = futureType{
-          renameToUniqueVar(fromVar, toVar, aLowerType)(_)
-        }
-        val lazyRenamedAUpperType = futureType{
-          renameToUniqueVar(fromVar, toVar, aUpperType)(_)
-        }
-        cont(TypeDecl(a, lazyRenamedALowerType, lazyRenamedAUpperType))
-      case AndType(left, right) =>
-        val lazyRenamedLeft = futureType{
-          renameToUniqueVar(fromVar, toVar, left)(_)
-        }
-        val lazyRenamedRight = futureType{
-          renameToUniqueVar(fromVar, toVar, right)(_)
-        }
-        cont(AndType(lazyRenamedLeft, lazyRenamedRight))
-      case _ =>
-        cont(t)
-    }
-
-    def exprRenameVar[T <: Expr](fromVar: Symbol, toVar: Symbol, e: T): T = e match { // TODO do in parallel and use TermFuture
-      case Var(x) if x == fromVar => Var(toVar).asInstanceOf[T]
-      case App(x, y) if x == fromVar || y == fromVar =>
-        val newX = if (x == fromVar) toVar else x
-        val newY = if (y == fromVar) toVar else y
-        App(newX, newY).asInstanceOf[T]
-      case Let(x, xTerm, t) if x != fromVar =>
-        Let(x, exprRenameVar(fromVar, toVar, xTerm), exprRenameVar(fromVar, toVar, t)).asInstanceOf[T]
-      case Sel(x, a) if x == fromVar =>
-        Sel(toVar, a).asInstanceOf[T]
-      case Obj(x, xType, d) if x != fromVar =>
-        val newXType = futureType{
-          renameToUniqueVar(fromVar, toVar, xType)(_)
-        }
-        Obj(x, newXType, exprRenameVar(fromVar, toVar, d)).asInstanceOf[T]
-      case Fun(x, xType, t) if x != fromVar =>
-        val newXType = futureType{
-          renameToUniqueVar(fromVar, toVar, xType)(_)
-        }
-        Fun(x, newXType, exprRenameVar(fromVar, toVar, t)).asInstanceOf[T]
-      case FieldDef(a, aTerm) =>
-        FieldDef(a, exprRenameVar(fromVar, toVar, aTerm)).asInstanceOf[T]
-      case TypeDef(a, aType) =>
-        val newAType = futureType{
-          renameToUniqueVar(fromVar, toVar, aType)(_)
-        }
-        TypeDef(a, newAType).asInstanceOf[T]
-      case AndDef(left, right) =>
-        AndDef(
-          exprRenameVar(fromVar, toVar, left),
-          exprRenameVar(fromVar, toVar, right)).asInstanceOf[T]
-      case _ => e
-    }
-
-    // TODO will raiseTo(..., classA, classA) when classA is partially lazy lead to problems?
-
-    // TODO replace killScope:Scope with killSet:Set[Symbol]?
-
-    def contFuture[T >: Null](f: ((T) => Unit) => Unit): DefaultCell[T] = {
-      val lattice = Lattice.trivial[T]
-      contCell(lattice)(f)
-    }
-
-    case class TermFuture(cell: DefaultCell[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances! // TODO pool as argument instead?
-      type ThisType = TermFuture
-      val treeHeight = 1
-      val totNumNodes = 1
-      assignedTypeOption = Some(futureType{cont =>
-        onComplete(cell){actualTerm =>
-          cont(actualTerm.assignedTypeOption.getOrElse(error()))
-        }
-      })
-      def withTypeOption(typeOption: Option[Type]) = {
-        val res = this.copy()
-        res.assignedTypeOption = typeOption
-        res
-      }
-    }
-
-    case class DefFuture(cell: DefaultCell[Def]) extends Def { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
-      type ThisType = DefFuture
-      val treeHeight = 1
-      val totNumNodes = 1
-      def withTypeOption(typeOption: Option[Type]) = {
-        val res = this.copy()
-        res.assignedTypeOption = typeOption
-        res
-      }
-    }
-
-    def termFuture(f: ((Term) => Unit) => Unit) = this.TermFuture(contFuture(f))
-    def defFuture(f: ((Def) => Unit) => Unit) = this.DefFuture(contFuture(f))
-
-//    class LazyFutureType(atom: AtomicReference[FutureType], putter: (Type => Unit) => Unit) extends CanonicalPrototype {
-//      val treeHeight = 2
-//      val totNumNodes = 2
+//    // TODO smarter futureType that does not always fork? e.g. r(..., asFutureTypePlease=true) and chooses to make a future or not
 //
-//      def get: CanonicalFuture = {
-//        var current = atom.get()
-//        while (current == null) {
-//          val completer = newCellCompleter[Type](pool, Lattice.trivial)
-//          val future = CanonicalFuture(completer.cell)
-//          if (atom.compareAndSet(null, future)) {
-//            launch {
-//              putter {typ =>
-//                completer.putFinal(typ)
-//              }
-//            }
-//            current = future
-//          } else {
-//            freeze(completer)
-//          }
+//    def launch(f: => Unit) {
+//      pool.execute{() => f}
+//    }
+//
+//    def contCell[T](lattice: Lattice[T])(f: (T => Unit) => Unit): DefaultCell[T] = {
+//      val completer = newCellCompleter(pool, lattice)
+//      launch {
+//        f {res =>
+//            completer.putFinal(res)
 //        }
-//        current
+//        // TODO catch and rethrow exceptions? should probably not call error()
+//        // since we are not expecting errors. --- WHAT?
+//      }
+//      completer.cell
+//    }
+//
+//    def contZipFork[A >: Null, B >: Null](a: (A => Unit) => Unit, b: (B => Unit) => Unit)(cont: (A, B) => Unit): Unit = { // TODO test
+//      val aCell = contCell(Lattice.trivial[A])(a)
+//      val bCell = contCell(Lattice.trivial[B])(b)
+//      onComplete(aCell) {aRes =>
+//        onComplete(bCell) {bRes =>
+//          cont(aRes, bRes)
+//        }
 //      }
 //    }
-
-
-    def error(): Type = {
-      hasErrorsAtom.lazySet(true)
-      ???
-      ErrorType
-    }
-
-
-
-    // TODO assert that types are not prototypes
-
-    // TODO INV: never return a type that is not in the given scope
-    // e.g.:
-    //   f: fun(x: {A: Int..Int})x.A
-    //   f({A = Int}): Int  // i.e. not x.A
-    // TODO circular dependencies between fields should always result in ErrorType?
-
-    def typecheckTerm(e: Term, p: Prototype = Que, scope: Scope = Map()): TypedTerm = ??? // TODO term-continuations?
-
-    def run[T >: Null](f: ((T) => Unit) => Unit): Option[T] = {
-      val rootPromise = Promise[Option[T]]()
-      launch {
-        val rootCell = contFuture[T](f)
-        onComplete(rootCell){rootType =>
-          val res = if (hasErrorsAtom.get()) None else Some(rootType)
-          rootPromise.success(res)
-        }
-      }
-      try {
-        val incompleteCellsAtTheEnd = Await.result(pool.quiescentIncompleteCells, 10.seconds) // TODO
-        if (incompleteCellsAtTheEnd.size != 0) {
-          if (hasErrorsAtom.get())
-            throw new NotImplementedError("quiescent with incomplete cells AND errors")
-          else
-            throw new TimeoutException("quiescent with incomplete cells")
-          None
-        }
-        await(rootPromise.future)
-      } catch {
-        case e: TimeoutException => e.printStackTrace(); None
-        case e: NotImplementedError => e.printStackTrace(); None
-      }
-    }
-
-
+//
+//    def futureType(f: ((Type) => Unit) => Unit): Type = {
+//      FutureType(contCell(Lattice.trivial[Type])(f))
+//    }
+//
+//
+//    def expandTermFutures(term: Term)(cont: (Term) => Unit): Unit = term match {
+//      case TermFuture(cell) =>
+//        onComplete(cell){
+//          expandTermFutures(_)(cont)
+//        }
+//      case _ =>
+//        def expandAssignedType(t: Term)(c: (Term) => Unit): Unit = {
+//          t.assignedTypeOption match {
+//            case Some(termType) =>
+//              expandTypeFutures(termType){termType =>
+//                c(t.withType(termType))
+//              }
+//            case None =>
+//              c(t)
+//          }
+//        }
+//
+//        term match {
+//          case Let(x, xTerm, resTerm) =>
+//            expandTermFutures(xTerm){xTerm =>
+//              expandTermFutures(resTerm){resTerm =>
+//                expandAssignedType(Let(x, xTerm, resTerm).withTypeOption(term.assignedTypeOption))(cont)
+//              }
+//            }
+//          case Obj(x, xType, body) =>
+//            expandTypeFutures(xType){xType =>
+//              expandDefFutures(body){body =>
+//                expandAssignedType(Obj(x, xType, body).withTypeOption(term.assignedTypeOption))(cont)
+//              }
+//            }
+//          case Fun(x, xType, body) =>
+//            expandTypeFutures(xType){xType =>
+//              expandTermFutures(body){body =>
+//                expandAssignedType(Fun(x, xType, body).withTypeOption(term.assignedTypeOption))(cont)
+//              }
+//            }
+//          case _ => // Var, App, Sel
+//            expandAssignedType(term)(cont)
+//        }
+//    }
+//
+//    def expandDefFutures(d: Def)(cont: (Def) => Unit): Unit = d match {
+//      case DefFuture(cell) =>
+//        onComplete(cell){
+//          expandDefFutures(_)(cont)
+//        }
+//      case _ =>
+//        def expandAssignedType(d2: Def)(c: (Def) => Unit): Unit = {
+//          d2.assignedTypeOption match {
+//            case Some(termType) =>
+//              expandTypeFutures(termType){termType =>
+//                c(d2.withType(termType))
+//              }
+//            case None =>
+//              c(d2)
+//          }
+//        }
+//        d match {
+//          case FieldDef(a, aTerm) =>
+//            expandTermFutures(aTerm){aTerm =>
+//              expandAssignedType(FieldDef(a, aTerm).withTypeOption(d.assignedTypeOption))(cont)
+//            }
+//          case AndDef(left, right) =>
+//            expandDefFutures(left){left =>
+//              expandDefFutures(right){right =>
+//                expandAssignedType(AndDef(left, right).withTypeOption(d.assignedTypeOption))(cont)
+//              }
+//            }
+//          case TypeDef(a, aType) =>
+//            expandTypeFutures(aType){aType =>
+//              expandAssignedType(TypeDef(a, aType).withTypeOption(d.assignedTypeOption))(cont)
+//            }
+//          case _ =>
+//            ???
+//        }
+//    }
+//
+//
+//    def contFold[A](first: ((A) => Unit) => Unit, seq: List[((A) => Unit) => Unit])(f: (A, A) => ((A) => Unit) => Unit)(cont: (A) => Unit): Unit = {
+//      seq match {
+//        case second :: rest =>
+//          first {firstRes =>
+//            second {secondRes =>
+//              contFold(f(firstRes, secondRes), rest)(f)(cont)
+//            }
+//          }
+//        case Nil => first(cont)
+//      }
+//    }
+//
+//    // TODO contCommutativeAssociativeReduce
+//    def contReduce[A](seq: List[((A) => Unit) => Unit])(f: (A, A) => ((A) => Unit) => Unit)(cont: (A) => Unit): Unit = {
+//      seq match {
+//        case Nil => throw new UnsupportedOperationException()
+//        case first :: rest =>
+//          contFold(first, rest)(f)(cont)
+//      }
+//    }
+//
+//
+//    def renameToUniqueVar(fromVar: Symbol, toVar: Symbol, t: Type)(cont: (Type) => Unit): Unit = t match {
+//      case FutureType(cell) =>
+//        onComplete(cell){actualT =>
+//          renameToUniqueVar(fromVar, toVar, actualT)(cont)
+//        }
+//      case TypeProj(x, a) if x == fromVar =>
+//        cont(TypeProj(toVar, a))
+//      case FunType(x, xType, resType) if x != fromVar =>
+//        // TODO assert(x != toVar)
+//        val lazyRenamedXType = futureType{
+//          renameToUniqueVar(fromVar, toVar, xType)(_)
+//        }
+//        val lazyRenamedResType = futureType{
+//          renameToUniqueVar(fromVar, toVar, resType)(_)
+//        }
+//        cont(FunType(x, lazyRenamedXType, lazyRenamedResType))
+//      case RecType(x, xType) if x != fromVar =>
+//        // TODO assert(x != toVar)
+//        val lazyRenamedXType = futureType{
+//          renameToUniqueVar(fromVar, toVar, xType)(_)
+//        }
+//        cont(RecType(x, lazyRenamedXType)) // TODO vs non-lazy?
+//      case FieldDecl(a, aType) =>
+//        val lazyRenamedAType = futureType{
+//          renameToUniqueVar(fromVar, toVar, aType)(_)
+//        }
+//        cont(FieldDecl(a, lazyRenamedAType)) // TODO vs non-lazy?
+//      case TypeDecl(a, aLowerType, aUpperType) =>
+//        val lazyRenamedALowerType = futureType{
+//          renameToUniqueVar(fromVar, toVar, aLowerType)(_)
+//        }
+//        val lazyRenamedAUpperType = futureType{
+//          renameToUniqueVar(fromVar, toVar, aUpperType)(_)
+//        }
+//        cont(TypeDecl(a, lazyRenamedALowerType, lazyRenamedAUpperType))
+//      case AndType(left, right) =>
+//        val lazyRenamedLeft = futureType{
+//          renameToUniqueVar(fromVar, toVar, left)(_)
+//        }
+//        val lazyRenamedRight = futureType{
+//          renameToUniqueVar(fromVar, toVar, right)(_)
+//        }
+//        cont(AndType(lazyRenamedLeft, lazyRenamedRight))
+//      case _ =>
+//        cont(t)
+//    }
+//
+//    def exprRenameVar[T <: Expr](fromVar: Symbol, toVar: Symbol, e: T): T = e match { // TODO do in parallel and use TermFuture
+//      case Var(x) if x == fromVar => Var(toVar).asInstanceOf[T]
+//      case App(x, y) if x == fromVar || y == fromVar =>
+//        val newX = if (x == fromVar) toVar else x
+//        val newY = if (y == fromVar) toVar else y
+//        App(newX, newY).asInstanceOf[T]
+//      case Let(x, xTerm, t) if x != fromVar =>
+//        Let(x, exprRenameVar(fromVar, toVar, xTerm), exprRenameVar(fromVar, toVar, t)).asInstanceOf[T]
+//      case Sel(x, a) if x == fromVar =>
+//        Sel(toVar, a).asInstanceOf[T]
+//      case Obj(x, xType, d) if x != fromVar =>
+//        val newXType = futureType{
+//          renameToUniqueVar(fromVar, toVar, xType)(_)
+//        }
+//        Obj(x, newXType, exprRenameVar(fromVar, toVar, d)).asInstanceOf[T]
+//      case Fun(x, xType, t) if x != fromVar =>
+//        val newXType = futureType{
+//          renameToUniqueVar(fromVar, toVar, xType)(_)
+//        }
+//        Fun(x, newXType, exprRenameVar(fromVar, toVar, t)).asInstanceOf[T]
+//      case FieldDef(a, aTerm) =>
+//        FieldDef(a, exprRenameVar(fromVar, toVar, aTerm)).asInstanceOf[T]
+//      case TypeDef(a, aType) =>
+//        val newAType = futureType{
+//          renameToUniqueVar(fromVar, toVar, aType)(_)
+//        }
+//        TypeDef(a, newAType).asInstanceOf[T]
+//      case AndDef(left, right) =>
+//        AndDef(
+//          exprRenameVar(fromVar, toVar, left),
+//          exprRenameVar(fromVar, toVar, right)).asInstanceOf[T]
+//      case _ => e
+//    }
+//
+//    // TODO will raiseTo(..., classA, classA) when classA is partially lazy lead to problems?
+//
+//    // TODO replace killScope:Scope with killSet:Set[Symbol]?
+//
+//    def contFuture[T >: Null](f: ((T) => Unit) => Unit): DefaultCell[T] = {
+//      val lattice = Lattice.trivial[T]
+//      contCell(lattice)(f)
+//    }
+//
+//    private case class TermFuture(cell: DefaultCell[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances! // TODO pool as argument instead?
+//      val treeHeight = 1
+//      val totNumNodes = 1
+//      assignedTypeOption = Some(futureType{cont =>
+//        onComplete(cell){actualTerm =>
+//          cont(actualTerm.assignedTypeOption.getOrElse(error()))
+//        }
+//      })
+//      def withTypeOption(typeOption: Option[Type]) = {
+//        val res = this.copy()
+//        res.assignedTypeOption = typeOption
+//        res
+//      }
+//    }
+//
+//    private case class DefFuture(cell: DefaultCell[Def]) extends Def { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances!
+//      val treeHeight = 1
+//      val totNumNodes = 1
+//      def withTypeOption(typeOption: Option[Type]) = {
+//        val res = this.copy()
+//        res.assignedTypeOption = typeOption
+//        res
+//      }
+//    }
+//
+//    private def termFuture(f: ((Term) => Unit) => Unit) = this.TermFuture(contFuture(f))
+//    private def defFuture(f: ((Def) => Unit) => Unit) = this.DefFuture(contFuture(f))
+//
+////    class LazyFutureType(atom: AtomicReference[FutureType], putter: (Type => Unit) => Unit) extends CanonicalPrototype {
+////      val treeHeight = 2
+////      val totNumNodes = 2
+////
+////      def get: CanonicalFuture = {
+////        var current = atom.get()
+////        while (current == null) {
+////          val completer = newCellCompleter[Type](pool, Lattice.trivial)
+////          val future = CanonicalFuture(completer.cell)
+////          if (atom.compareAndSet(null, future)) {
+////            launch {
+////              putter {typ =>
+////                completer.putFinal(typ)
+////              }
+////            }
+////            current = future
+////          } else {
+////            freeze(completer)
+////          }
+////        }
+////        current
+////      }
+////    }
+//
+//
+//    def error(): Type = {
+//      hasErrorsAtom.lazySet(true)
+//      ???
+//      ErrorType
+//    }
+//
+//
+//
+//    // TODO assert that types are not prototypes
+//
+//    // TODO INV: never return a type that is not in the given scope
+//    // e.g.:
+//    //   f: fun(x: {A: Int..Int})x.A
+//    //   f({A = Int}): Int  // i.e. not x.A
+//    // TODO circular dependencies between fields should always result in ErrorType?
+//
+//    def typecheckTerm(e: Term, p: Prototype = Que, scope: Scope = Map()): TypedTerm = ??? // TODO term-continuations?
+//
+//    def run[T >: Null](f: ((T) => Unit) => Unit): Option[T] = {
+//      val rootPromise = Promise[Option[T]]()
+//      launch {
+//        val rootCell = contFuture[T](f)
+//        onComplete(rootCell){rootType =>
+//          val res = if (hasErrorsAtom.get()) None else Some(rootType)
+//          rootPromise.success(res)
+//        }
+//      }
+//      try {
+//        val incompleteCellsAtTheEnd = Await.result(pool.quiescentIncompleteCells, 10.seconds) // TODO
+//        if (incompleteCellsAtTheEnd.size != 0) {
+//          if (hasErrorsAtom.get())
+//            throw new NotImplementedError("quiescent with incomplete cells AND errors")
+//          else
+//            throw new TimeoutException("quiescent with incomplete cells")
+//          None
+//        }
+//        await(rootPromise.future)
+//      } catch {
+//        case e: TimeoutException => e.printStackTrace(); None
+//        case e: NotImplementedError => e.printStackTrace(); None
+//      }
+//    }
+//
+//
   } // end class Parallel
 
   def typecheckInParallel(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: Prototype = Que, rootScope: Map[Symbol, Type] = Map()): Option[Term] = {
-    val pool         = new HandlerPool(1) // TODO
-    val typeChecker  = Parallel(symbolUniverse, pool, new AtomicBoolean(false))
-    typeChecker.run[Term]{cont =>
-      val lazyTypedTerm = typeChecker.typecheckTerm(rootExpr, rootPrototype, rootScope)
-      typeChecker.expandTermFutures(lazyTypedTerm) { typedTerm =>
-        cont(typedTerm)
-      }
-    }
-  }
-
-
-  def typecheckSequentially(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: Prototype = Que, rootScope: Map[Symbol, Type] = Map()): Option[Term] = {
-    try {
-      Some(NoFuture.typecheckTerm(symbolUniverse, rootExpr, rootPrototype, rootScope))
-    } catch {
-      case e: TypecheckingError => e.printStackTrace(); None
-      case e: NotImplementedError => e.printStackTrace(); None
-    }
+    ???
+//    val pool         = new HandlerPool(1) // TODO
+//    val typeChecker  = Parallel(symbolUniverse, pool, new AtomicBoolean(false))
+//    typeChecker.run[Term]{cont =>
+//      val lazyTypedTerm = typeChecker.typecheckTerm(rootExpr, rootPrototype, rootScope)
+//      typeChecker.expandTermFutures(lazyTypedTerm) { typedTerm =>
+//        cont(typedTerm)
+//      }
+//    }
   }
 }
