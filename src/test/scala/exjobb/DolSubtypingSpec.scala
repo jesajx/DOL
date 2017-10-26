@@ -410,8 +410,8 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
       val scope = ctx.globalScope ++ localScope
       val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
       val aRaiseP2 = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p2)}
-      (prettyNamed("aRaiseP2", aRaiseP2)
-        |: prettyNamed("aRaiseP", aRaiseP)
+      (prettyNamed("aRaiseP", aRaiseP)
+        |: prettyNamed("aRaiseP2", aRaiseP2)
         |: Prop.protect(aRaiseP != None && aRaiseP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP2.get), z, aRaiseP.get)))
     }}
   }
@@ -430,8 +430,8 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
       val scope = ctx.globalScope ++ localScope
       val aLowerP = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, p)}
       val aLowerP2 = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, p2)}
-      (prettyNamed("aLowerP2", aLowerP2)
-        |: prettyNamed("aLowerP", aLowerP)
+      (prettyNamed("aLowerP", aLowerP)
+        |: prettyNamed("aLowerP2", aLowerP2)
         |: Prop.protect(aLowerP != None && aLowerP2 != None && NoFuture.varIsSubtypeOf(scope + (z -> aLowerP.get), z, aLowerP2.get)))
     }}
   }

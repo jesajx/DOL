@@ -36,22 +36,22 @@ object DolShrinkers {
     case _ => Stream()
   }
 
-//  def shrinkScopeIfPossible(scope: Scope, directlyUsedVars: Set[Symbol]): Scope = {
-//    def bfs(usedVars: Set[Symbol]): Set[Symbol] = {
-//      val reachable = usedVars.flatMap{x =>
-//        NoFuture.allFreeVarsInType(scope(x))
-//      }
-//      val newUsedVars: Set[Symbol] = usedVars ++ reachable
-//      if (newUsedVars.size == usedVars.size)
-//        usedVars
-//      else
-//        bfs(newUsedVars)
-//    }
-//
-//    val allUsedVars = bfs(directlyUsedVars)
-//    allUsedVars.map{x => (x, scope(x))}.toMap
-//  }
-//
+  def shrinkScopeIfPossible(scope: Scope, directlyUsedVars: Set[Symbol]): Scope = {
+    def bfs(usedVars: Set[Symbol]): Set[Symbol] = {
+      val reachable = usedVars.flatMap{x =>
+        NoFuture.allFreeVarsInType(scope(x))
+      }
+      val newUsedVars: Set[Symbol] = usedVars ++ reachable
+      if (newUsedVars.size == usedVars.size)
+        usedVars
+      else
+        bfs(newUsedVars)
+    }
+
+    val allUsedVars = bfs(directlyUsedVars)
+    allUsedVars.map{x => (x, scope(x))}.toMap
+  }
+
 //  def shrinkInferenceProblemScopeIfPossible(problem: InferenceProblem): InferenceProblem = {
 //    val directlyUsedVars = problem.scope.keys.filter{x =>
 //      (NoFuture.isVarFreeInTerm(x, problem.term)
@@ -203,4 +203,18 @@ object DolShrinkers {
 //    //else
 //    res.map{case (ctx2, p2) => (ctx2, shrinkInferenceProblemScopeIfPossible(p2))}
 //  }
+
+
+
+  def shrinkInferenceProblem(tuple: (GlobalContext, InferenceProblem.Term)): Stream[(GlobalContext, InferenceProblem.Term)] = {
+    val (ctx, p) = tuple
+    // TODO Handle prototypes properly!!!
+    InferenceProblem.subproblems(ctx, p).map{case (ctx2, p2) =>
+      val newGlobalScope = shrinkScopeIfPossible(ctx2.globalScope, InferenceProblem.freeVars(p2))
+      // TODO Also shrink scope by substituting TypeProjs with the type they
+      // are referencing?
+      (ctx2.copy(globalScope=newGlobalScope), p2)
+    }
+  }
+
 }
