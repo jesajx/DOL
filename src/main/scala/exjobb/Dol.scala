@@ -696,10 +696,27 @@ object Dol {
     }
 
 
-    sealed case class ObjStdDecls(fields: Map[Symbol, Type], types: Map[Symbol, Type], hasBot: Boolean)
+    sealed case class ObjStdDecls(fields: Map[Symbol, Type], types: Map[Symbol, Type], hasBot: Boolean) { // TODO hasQue: Boolean
+      def split(leftDom: Set[Symbol], rightDom: Set[Symbol]): (ObjStdDecls, ObjStdDecls) = {
+        val leftFields = fields.filterKeys(leftDom)
+        val rightFields = fields.filterKeys(rightDom)
+        val leftTypes = types.filterKeys(leftDom)
+        val rightTypes = types.filterKeys(rightDom)
+        if (hasBot) ???
+        (ObjStdDecls(leftFields, leftTypes, false), ObjStdDecls(rightFields, rightTypes, false))
+      }
 
-    def objStdDecl(scope: Scope, x: Symbol, typ: Type): ObjStdDecls = {
-      def inner(scope: Scope, x: Symbol, typ: Type, visited: Set[TypeProj]): ObjStdDecls = typ match {
+      def toType(): Prototype =
+        if (hasBot)
+          Bot
+        else if (fields.size + types.size > 0)
+          (fields.values ++ types.values).reduce{AndType(_, _)}
+        else
+          Que
+    }
+
+    def objStdDecl(scope: Scope, x: Symbol, typ: Prototype): ObjStdDecls = {
+      def inner(scope: Scope, x: Symbol, typ: Prototype, visited: Set[TypeProj]): ObjStdDecls = typ match {
         case RecType(y, yType) if x != y =>
           inner(scope, x, typeRenameBoundVarAssumingNonFree(x, typ), visited)
         case RecType(y, yType) if x == y =>
@@ -709,6 +726,7 @@ object Dol {
         case proj @ TypeProj(y, a) =>
           inner(scope, x, typeProjectUpper(scope, y, a).get, visited + proj)
         case Bot => ObjStdDecls(Map(), Map(), true)
+        case Que => ObjStdDecls(Map(), Map(), false) // TODO add hasQue:Boolean to ObjStdDecls?
         case AndType(left, right) =>
           val ObjStdDecls(leftFields, leftTypes, leftHasBot) = inner(scope, x, left, visited)
           val ObjStdDecls(rightFields, rightTypes, rightHasBot) = inner(scope, x, right, visited)
@@ -860,12 +878,48 @@ object Dol {
       }
     }
 
+    // TODO invent error-reporting similar to line:col, but for arbitrary trees?
 
     def eliminateVarUpOLD(scope: Scope, z: Symbol, typ: Type): Type = {
       eliminateVars(scope, Set(z), None, typ)
     }
 
+    def dom(d: Def): Set[Symbol] = d match {
+      case FieldDef(a, _)      => Set(a)
+      case TypeDef(a, _)       => Set(a)
+      case AndDef(left, right) => dom(left) ++ dom(right)
+    }
+
     def error() = {throw new TypecheckingError(); ErrorType}
+
+    def typecheckDef(su: SymbolUniverse, d: Def, prototype: Prototype = Que, scope: Scope = Map()): Typed.Def = (d, prototype) match {
+      case (AndDef(left, right), p) =>
+        val leftDom = dom(left)
+        val rightDom = dom(right)
+        val overlap = leftDom.intersect(rightDom)
+        if (!overlap.isEmpty) {
+          throw new TypecheckingError(s"overlapping doms: $overlap")
+        }
+
+        val stdPrototype = objStdDecl(scope, -1, prototype) // NOTE: expect any rectypes to have been unwrapped.
+        val (leftStdPrototype, rightStdPrototype) = stdPrototype.split(leftDom, rightDom)
+        val leftPrototype = leftStdPrototype.toType
+        val rightPrototype = rightStdPrototype.toType
+
+        val typedLeft  = typecheckDef(su, left, leftPrototype, scope)
+        val typedRight = typecheckDef(su, right, rightPrototype, scope)
+        TypedAndDef(typedLeft, typedRight) :- simplify(AndType(typedLeft.typ, typedRight.typ))
+      case (FieldDef(a, _), Que) =>
+        typecheckDef(su, d, FieldDecl(a, Que), scope)
+      case (FieldDef(a, aTerm), FieldDecl(b, bPrototype)) if a == b =>
+        val aTypedTerm = typecheckTerm(su, aTerm, bPrototype, scope)
+        TypedFieldDef(a, aTypedTerm) :- simplify(FieldDecl(a, aTypedTerm.typ))
+
+      case (TypeDef(a, aType), p) =>
+        val typ = TypeDecl(a, aType, aType)
+        TypedTypeDef(a, aType) :- simplify(typ)
+      case _ => ??? // complains about DefFuture.
+    }
 
     def typecheckTerm(su: SymbolUniverse, term: Term, prototype: Prototype = Que, scope: Scope = Map()): Typed.Term = (term, prototype) match {
       case (Var(x), p) =>
@@ -923,53 +977,18 @@ object Dol {
         }
       case (Obj(x, xType, defs), p) =>
         val localScope = scope + (x -> xType)
-        // TODO check that there are no duplicatesd
-        def typecheckDef(d: Def): Typed.Def = d match {
-          case AndDef(left, right) =>
-            val typedLeft  = typecheckDef(left)
-            val typedRight = typecheckDef(right)
-            TypedAndDef(typedLeft, typedRight) :- simplify(AndType(typedLeft.typ, typedRight.typ))
-          case FieldDef(a, aTerm) =>
-            val aPrototype = raise(scope, su.newSymbol(), None, xType, FieldDecl(a, Que)) match {
-              case Some(FieldDecl(b, bPrototype)) if a == b => bPrototype
-              case None => Que
-              case _ => error()
-            }
-            val aTypedTerm = typecheckTerm(su, aTerm, aPrototype, localScope)
-            TypedFieldDef(a, aTypedTerm) :- simplify(FieldDecl(a, aTypedTerm.typ))
-          case TypeDef(a, aType) =>
-            val typ = TypeDecl(a, aType, aType)
-            //val declPrototype = raise(scope, su.newSymbol(), None, xType, TypeDecl(a, Que, Que)) match { // TODO this won't work....
-            //  case Some(decl @ TypeDecl(b, _, _)) if a == b => decl // TODO what about TypeDecl(a, x.a, x.a)?
-            //  case None => Que
-            //  case _ => error()
-            //}
-            //val myType = raise(scope, su.newSymbol(), None, TypeDecl(a, aType, aType), declPrototype) match {
-            //  case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
-            //  case _ => error()
-            //}
-            TypedTypeDef(a, aType) :- simplify(typ)
-          case _ => ??? // complains about DefFuture.
-        }
-        // TODO check everything in xType is in defs
 
-        if (defHasDuplicates(defs)) {
-          throw new TypecheckingError("duplicate defs")
-        } else {
-          val typedDefs = typecheckDef(defs)
-          if (!varIsSubtypeOf(scope + (x -> typedDefs.typ), x, xType)) {
-            throw new TypecheckingError(s"not: ${typedDefs.typ} <: $xType")
-          }
-          pprint.pprintln((xType, p))
-          //if (p == Que) // TODO
-          //  TypedObj(x, xType, typedDefs) :- RecType(x, xType)
-          //else
-          raise(scope, su.newSymbol(), None, RecType(x, xType), p) match {
-            case Some(typ) =>
-              TypedObj(x, xType, typedDefs) :- typ
-            case None =>
-              throw new TypecheckingError(s"fail raise($x, ${RecType(x, xType)}, $p)")
-          }
+        val std = objStdDecl(localScope, x, xType)
+        val typedDefs = typecheckDef(su, defs, std.toType, localScope)
+
+        //if (p == Que) // TODO
+        //  TypedObj(x, xType, typedDefs) :- RecType(x, xType)
+        //else
+        raise(scope, su.newSymbol(), None, RecType(x, xType), p) match {
+          case Some(typ) =>
+            TypedObj(x, xType, typedDefs) :- typ
+          case None =>
+            throw new TypecheckingError(s"fail raise($x, ${RecType(x, xType)}, $p)")
         }
       // TODO DOL extensions to DOT
       case _ =>

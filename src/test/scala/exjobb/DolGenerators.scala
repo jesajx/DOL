@@ -749,7 +749,7 @@ object DolGenerators {
       Gen.fail
     else for { // minSize = 2 = 1 FieldDef + 1 aTerm.
       (ctx2, a) <- ctx.newSymbol()
-      (ctx3, p) <- Gen.resize(size-1, genInferenceProblem(ctx2, localScope))
+      (ctx3, p) <- Gen.resize(size-1, genInferenceProblem(ctx2, localScope)) // TODO this may end up generating a var that references the enclosing object, but the type will be wrong since we do not know the whole type here.
       myType    <- const(FieldDecl(a, p.typ))
     } yield (ctx3, IFieldDef(a, p) :? myType)
   }
@@ -775,9 +775,9 @@ object DolGenerators {
         })
         (ctx3, right) <- Gen.resize(rightSize, genSimpleDef(ctx2, localScope + (z -> zTypeIncludingLeft), z))
       } yield (ctx3, IAndDef(left, right) :? AndType(left.typ, right.typ))
-      oneOf(genFieldDef(ctx, localScope), genTypeDef(ctx, localScope), genAndDef)
+      oneOf(genFieldDef(ctx, localScope - z), genTypeDef(ctx, localScope - z), genAndDef)
     } else if (size >= 2)
-      oneOf(genFieldDef(ctx, localScope), genTypeDef(ctx, localScope))
+      oneOf(genFieldDef(ctx, localScope - z), genTypeDef(ctx, localScope - z))
     else
       Gen.fail
   }
@@ -788,7 +788,7 @@ object DolGenerators {
     else for {
       (ctx2, x)    <- ctx.newSymbol()
       (ctx3, defs) <- Gen.resize(size - 1, genSimpleDef(ctx2, scope, x))
-      xType        <- const(defs.typ) // TODO vs supertype. // TODO problem: how to determine size?
+      xType        <- const(defs.typ) // TODO vs supertype. // TODO problem: how to determine size for supertype?
     } yield (ctx3, IObj(x, xType, defs) :? RecType(x, xType))
   }
 
@@ -855,6 +855,50 @@ object DolGenerators {
     genAppInferenceProblem(ctx, scope),
     genObjInferenceProblem(ctx, scope)
   )
+
+  def genVarInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = ???
+  def genLetInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = ???
+  def genSelInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = ???
+  def genAppInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = ???
+  def genObjInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = ???
+  def genFunInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = ???
+
+  def genInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = {
+    prototype match {
+      case _: FunType =>
+        oneOf(
+          genVarInferenceProblemFromPrototype(ctx, scope, prototype),
+          genLetInferenceProblemFromPrototype(ctx, scope, prototype),
+          genSelInferenceProblemFromPrototype(ctx, scope, prototype),
+          genAppInferenceProblemFromPrototype(ctx, scope, prototype),
+          genFunInferenceProblemFromPrototype(ctx, scope, prototype)
+        )
+      case _: RecType =>
+        oneOf(
+          genVarInferenceProblemFromPrototype(ctx, scope, prototype),
+          genLetInferenceProblemFromPrototype(ctx, scope, prototype),
+          genSelInferenceProblemFromPrototype(ctx, scope, prototype),
+          genAppInferenceProblemFromPrototype(ctx, scope, prototype),
+          genObjInferenceProblemFromPrototype(ctx, scope, prototype)
+        )
+      case Que | Top | _: TypeProj =>
+        oneOf(
+          genVarInferenceProblemFromPrototype(ctx, scope, prototype),
+          genLetInferenceProblemFromPrototype(ctx, scope, prototype),
+          genSelInferenceProblemFromPrototype(ctx, scope, prototype),
+          genAppInferenceProblemFromPrototype(ctx, scope, prototype),
+          genObjInferenceProblemFromPrototype(ctx, scope, prototype),
+          genFunInferenceProblemFromPrototype(ctx, scope, prototype)
+        )
+      case _ => // FieldDecl, TypeDecl, AndType, Bot
+        oneOf(
+          genVarInferenceProblemFromPrototype(ctx, scope, prototype),
+          genLetInferenceProblemFromPrototype(ctx, scope, prototype),
+          genSelInferenceProblemFromPrototype(ctx, scope, prototype),
+          genAppInferenceProblemFromPrototype(ctx, scope, prototype)
+        )
+    }
+  }
 
   object EqCheck {
     type Term = EqCheck.Term.:!

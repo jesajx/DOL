@@ -45,7 +45,7 @@ object DolUtilSpec extends Properties("DolUtilSpec") {
       }.toMap
 
 
-      val label = pretty(Map(
+      val label = pretty(Map[String, Any](
         "expectedAllVars" -> expectedAllVars,
         "allVars        " -> allVars,
         "freeVars       " -> freeVars,
