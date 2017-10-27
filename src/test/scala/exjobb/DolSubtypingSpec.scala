@@ -471,7 +471,7 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
   }
 
 
-  // TODO raise(a,a)==A?
+  // TODO raise(a,a)==a?
 
   property("NoFuture.rigidEqualTypes -- rigidEqualTypes(a, a)") = { // TODO unnecessary?
     val generator: Gen[(GlobalContext, Type)] = for {
@@ -615,6 +615,46 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
     }}
   }
 
+  property("NoFuture.varRaise -- smallest(p) <: raise(a, p)") = {
+    val generator = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, localScope) <- genScope(ctx3)
+      (ctx5, a) <- genType(ctx4, localScope)
+      p <- genPrototypeFromType(a)
+    } yield (ctx5, localScope, r, z, a, p)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, r, z, a, p) =>
+      val scope = ctx.globalScope ++ localScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
+      val pSmallest = NoFuture.smallestOfPrototype(p)
+      (prettyNamed("aRaiseP", aRaiseP)
+        |: prettyNamed("pSmallest", pSmallest)
+        |: Prop.protect(aRaiseP != None && NoFuture.varIsSubtypeOf(scope + (z -> pSmallest), z, aRaiseP.get)))
+    }}
+  }
+
+  property("NoFuture.varRaise -- raise(a, p) <: largest(p)") = {
+    val generator = for {
+      ctx1 <- genGlobalScope()
+      (ctx2, z) <- ctx1.newSymbol()
+      (ctx3, r) <- ctx2.newSymbol()
+      (ctx4, localScope) <- genScope(ctx3)
+      (ctx5, a) <- genType(ctx4, localScope)
+      p <- genPrototypeFromType(a)
+    } yield (ctx5, localScope, r, z, a, p)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, r, z, a, p) =>
+      val scope = ctx.globalScope ++ localScope
+      val aRaiseP = timeout(30.seconds){NoFuture.varRaise(scope + (z -> a), r, z, p)}
+      val pLargest = NoFuture.largestOfPrototype(p)
+      (prettyNamed("aRaiseP", aRaiseP)
+        |: prettyNamed("pLargest", pLargest)
+        |: Prop.protect(aRaiseP != None && NoFuture.varIsSubtypeOf(scope + (z -> aRaiseP.get), z, pLargest)))
+    }}
+  }
+
+
+  // TODO lowest(p) <: raise(a, p) <: largest(p)
 
 
 

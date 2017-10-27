@@ -696,6 +696,41 @@ object Dol {
     }
 
 
+    sealed case class ObjStdDecls(fields: Map[Symbol, Type], types: Map[Symbol, Type], hasBot: Boolean)
+
+    def objStdDecl(scope: Scope, x: Symbol, typ: Type): ObjStdDecls = {
+      def inner(scope: Scope, x: Symbol, typ: Type, visited: Set[TypeProj]): ObjStdDecls = typ match {
+        case RecType(y, yType) if x != y =>
+          inner(scope, x, typeRenameBoundVarAssumingNonFree(x, typ), visited)
+        case RecType(y, yType) if x == y =>
+          inner(scope, x, yType, visited)
+        case FieldDecl(a, _)       => ObjStdDecls(Map(a -> typ), Map(), false)
+        case TypeDecl(a, _, _)     => ObjStdDecls(Map(), Map(a -> typ), false)
+        case proj @ TypeProj(y, a) =>
+          inner(scope, x, typeProjectUpper(scope, y, a).get, visited + proj)
+        case Bot => ObjStdDecls(Map(), Map(), true)
+        case AndType(left, right) =>
+          val ObjStdDecls(leftFields, leftTypes, leftHasBot) = inner(scope, x, left, visited)
+          val ObjStdDecls(rightFields, rightTypes, rightHasBot) = inner(scope, x, right, visited)
+          val allFields = mapUnion(leftFields, rightFields){andType(_, _)}
+          val allTypes = mapUnion(leftTypes, rightTypes){andType(_, _)}
+          ObjStdDecls(allFields, allTypes, leftHasBot || rightHasBot)
+        case _ => ObjStdDecls(Map(), Map(), false)
+      }
+
+      val ObjStdDecls(fields, types, hasBot) = inner(scope, x, typ, Set())
+      if (hasBot)
+        ObjStdDecls(
+          fields.map{case (a, _) => (a -> Bot)},
+          types.map{case (a, _) => (a -> Bot)},
+          hasBot)
+      else
+        ObjStdDecls(
+          fields.map{case (a, aType) => (a -> simplify(aType))},
+          types,
+          hasBot)
+    }
+
     def andConstraint(left: Constraint, right: Constraint): Constraint = (left, right) match {
       case (TrueConstraint, _)  => right
       case (_, TrueConstraint)  => left
@@ -844,26 +879,25 @@ object Dol {
           case (TypedVar(z) :- _) => Some(z)
           case _ => None
         }
-        val letType = eliminateVars(scope, Set(x), zOption, typedResTerm.typ)
+        val letType = eliminateVars(scope + (x -> typedXTerm.typ), Set(x), zOption, typedResTerm.typ)
         TypedLet(x, typedXTerm, typedResTerm) :- simplify(letType)
       case (Sel(x, a), p) =>
         TypedSel(x, a) :- simplify{
           typecheckTerm(su, Var(x), FieldDecl(a, p), scope).typ match {
-            case FieldDecl(b, bType) if a == b =>
-              bType
-            case _ =>
-              ???; ErrorType // TODO
+            case FieldDecl(b, bType) if a == b => bType
+            case _ => ???; ErrorType // TODO
           }
         }
       case (App(x, y), p) =>
         TypedApp(x, y) :- {
           val z = su.newSymbol()
-          typecheckTerm(su, Var(x), FunType(z, Que, p), scope).typ match {
+          typecheckTerm(su, Var(x), FunType(z, Que, Que), scope).typ match {
             case FunType(w, wType, wResType) =>
               //pprint.pprintln(FunType(w, wType, wResType))
 
               val yType = typecheckTerm(su, Var(y), wType, scope).typ
-              typeRenameVar(w, y, wResType)
+              val yResType = typeRenameVar(w, y, wResType)
+              raise(scope, su.newSymbol(), None, yResType, p).get
             case _ => // TODO handle Bot and other special cases.
               ???; ErrorType // TODO
           }
@@ -905,16 +939,16 @@ object Dol {
             TypedFieldDef(a, aTypedTerm) :- simplify(FieldDecl(a, aTypedTerm.typ))
           case TypeDef(a, aType) =>
             val typ = TypeDecl(a, aType, aType)
-            val declPrototype = raise(scope, su.newSymbol(), None, xType, TypeDecl(a, Que, Que)) match {
-              case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
-              case None => TypeDecl(a, Que, Que)
-              case _ => error()
-            }
-            val myType = raise(scope, su.newSymbol(), None, TypeDecl(a, aType, aType), declPrototype) match {
-              case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
-              case _ => error()
-            }
-            TypedTypeDef(a, aType) :- simplify(myType)
+            //val declPrototype = raise(scope, su.newSymbol(), None, xType, TypeDecl(a, Que, Que)) match { // TODO this won't work....
+            //  case Some(decl @ TypeDecl(b, _, _)) if a == b => decl // TODO what about TypeDecl(a, x.a, x.a)?
+            //  case None => Que
+            //  case _ => error()
+            //}
+            //val myType = raise(scope, su.newSymbol(), None, TypeDecl(a, aType, aType), declPrototype) match {
+            //  case Some(decl @ TypeDecl(b, _, _)) if a == b => decl
+            //  case _ => error()
+            //}
+            TypedTypeDef(a, aType) :- simplify(typ)
           case _ => ??? // complains about DefFuture.
         }
         // TODO check everything in xType is in defs
@@ -926,11 +960,15 @@ object Dol {
           if (!varIsSubtypeOf(scope + (x -> typedDefs.typ), x, xType)) {
             throw new TypecheckingError(s"not: ${typedDefs.typ} <: $xType")
           }
-          varRaise(scope + (x -> xType), su.newSymbol(), x, p) match {
+          pprint.pprintln((xType, p))
+          //if (p == Que) // TODO
+          //  TypedObj(x, xType, typedDefs) :- RecType(x, xType)
+          //else
+          raise(scope, su.newSymbol(), None, RecType(x, xType), p) match {
             case Some(typ) =>
-              TypedObj(x, xType, typedDefs) :- simplify(typ)
+              TypedObj(x, xType, typedDefs) :- typ
             case None =>
-              throw new TypecheckingError(s"fail raise($x, ${typedDefs.typ}, $p)")
+              throw new TypecheckingError(s"fail raise($x, ${RecType(x, xType)}, $p)")
           }
         }
       // TODO DOL extensions to DOT
@@ -1094,7 +1132,7 @@ object Dol {
     def equalTerms(scope: Scope, first: Typed.Term, second: Typed.Term): Boolean = {
       val (leftTerm :- leftType) = first
       val (rightTerm :- rightType) = second
-      val theTypesAreEqual = equalTypes(scope, leftType, rightType) // TODO vs subtyping-equal?
+      val theTypesAreEqual = equalTypes(scope, leftType, rightType)
       val theTermsAreEqual = (leftTerm, rightTerm) match {
         case (TypedLet(x, xTerm, xResTerm), TypedLet(y, yTerm, yResTerm)) =>
           (x == y
@@ -1327,6 +1365,18 @@ object Dol {
       case _                   => None
     }
 
+    def largestOfPrototype(typ: Type) = typeTransform(typ, Covariant) {
+      case (Que, Covariant)     => Some(Top)
+      case (Que, Contravariant) => Some(Bot)
+      case _ => None
+    }
+    def smallestOfPrototype(typ: Type) = typeTransform(typ, Covariant) {
+      case (Que, Covariant)     => Some(Bot)
+      case (Que, Contravariant) => Some(Top)
+      case _ => None
+    }
+
+
     def gatherConstraints(scope: Scope, solveSet: Set[TypeProj], zOption: Option[Symbol], from: Type, to: Type, patternIsLeft: Boolean, visitedLeft: Set[(Type, Type)] = Set(), visitedRight: Set[(Type, Type)] = Set()): Constraint = {
 
 
@@ -1381,7 +1431,7 @@ object Dol {
 
           andConstraint(
             rec(from=yType, to=xType, zOption=None, patternIsLeft=(!patternIsLeft)),  // TODO Extension to DOT: zOption = Some(x)?
-            rec(scope = scope+(x -> yType), from=xResType, to=yResType, zOption=None))
+            rec(scope = scope+(x -> largest(yType)), from=xResType, to=yResType, zOption=None))
 
 
         case (FieldDecl(a, aType), FieldDecl(b, bType)) if a == b =>
@@ -1400,9 +1450,9 @@ object Dol {
             ??? // TODO Can this actually happen?
             FalseConstraint
           } else if (solveSet(aProj) && !solveSet(bProj)) {
-            MultiAndConstraint(Map(aProj -> (scope, Bot, to)))
+            MultiAndConstraint(Map(aProj -> (scope, Bot, smallest(to))))
           } else if (!solveSet(aProj) && solveSet(bProj)) {
-            MultiAndConstraint(Map(bProj -> (scope, from, Top)))
+            MultiAndConstraint(Map(bProj -> (scope, largest(from), Top)))
           } else { // if (!solveSet(aProj) && !solveSet(bProj))
             val newFromOption = if (visitedLeft((aProj, bProj))) Some(Top) else typeProjectUpper(scope, x, a)
             val newToOption = if (visitedRight((aProj, bProj))) Some(Bot) else typeProjectLower(scope, y, b)
@@ -1508,7 +1558,8 @@ object Dol {
           val newFromOption = if (visitedRight((aProj, to))) Some(Bot) else typeProjectUpper(scope, x, a)
           newFromOption match {
             case None          => FalseConstraint
-            case Some(newFrom) => rec(from=newFrom, visitedLeft = visitedLeft+((aProj, to)))
+            case Some(newFrom) =>
+              rec(from=newFrom, visitedLeft = visitedLeft+((aProj, to)))
           }
 
         case (Top | _: FieldDecl | _: TypeDecl | _: FunType | _: RecType, bProj @ TypeProj(y, b)) if !solveSet(bProj) =>
@@ -1980,29 +2031,27 @@ object Dol {
       case _ => Set()
     }
 
-    def directFieldDecls(scope: Scope, x: Symbol): Map[SymbolPath, Type] = {
-      def inner(scope: Scope, path: SymbolPath, typ: Type, visited: Set[TypeProj]): Map[SymbolPath, Type] = typ match {
-        case AndType(left, right) =>
-          val leftMap = inner(scope, path, left, visited)
-          val rightMap = inner(scope, path, right, visited)
-          mapUnion(leftMap, rightMap){AndType(_, _)}
-        case RecType(x, xType) =>
-          inner(scope, path, xType, visited)
-        case aProj @ TypeProj(x, a) =>
-          typeProjectUpper(scope, x, a) match {
-            case Some(aUpperType) => inner(scope, path, aUpperType, visited + aProj)
-            case None => ???; Map()
+    def directFieldDecls(scope: Scope, x: Symbol): Map[(Symbol, Symbol), Type] = {
+      def inner(scope: Scope, typ: Type, visited: Set[TypeProj]): Map[(Symbol, Symbol), Type] = {
+        val seq: Seq[Map[(Symbol, Symbol), Type]] = andTypeSeq(unwrapRecTypes(scope(x), x)).map{
+          case FieldDecl(a, aType) => Map((x, a) -> aType)
+          case proj @ TypeProj(y, a) if !visited(proj) =>
+            inner(scope, typeProjectUpper(scope, y, a).get, visited + proj)
+          case _ => Map[(Symbol, Symbol), Type]()
+        }
+        seq.fold(Map()){
+          mapUnion(_, _){
+            andType(_, _)
           }
-        case FieldDecl(a, aType) =>
-          Map((path :+ a) -> aType)
-        case _ =>
-          Map()
+        }
       }
-      inner(scope, Vector(x), scope(x), Set())
+      inner(scope, scope(x), Set())
     }
-    def directFieldDeclsInScope(scope: Scope): Map[SymbolPath, Type] = {
-      scope.keys.map{directFieldDecls(scope, _)}.fold(Map()){case (leftMap, rightMap) =>
-        mapUnion(leftMap, rightMap){AndType(_, _)}
+    def directFieldDeclsInScope(scope: Scope): Map[(Symbol, Symbol), Type] = {
+      scope.keys.map{directFieldDecls(scope, _)}.fold(Map()){
+        mapUnion(_, _){
+          andType(_, _)
+        }
       }
     }
 
@@ -2034,7 +2083,7 @@ object Dol {
     }
 
 
-    def selPath(su: SymbolUniverse, path: SymbolPath): Term = path match {
+    def selPath(su: SymbolUniverse, path: SymbolPath): Term = path match { // TODO REM?
       case Seq(x) =>
         Var(x)
       case x +: a +: Seq() =>

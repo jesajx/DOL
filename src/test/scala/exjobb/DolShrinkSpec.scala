@@ -55,4 +55,22 @@ object DolShrinkSpec extends Properties("DolShrinkSpec") {
 //        |: Prop.all(origRes == newRes))
 //    }}
 //  }
+  property("shrinkInferenceProblem does not throw") = {
+    val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
+      ctx1  <- genGlobalScope()
+      (ctx2, problem) <- genInferenceProblem(ctx1, Map())
+    } yield (ctx2, problem)
+    Prop.forAllNoShrink(generator){prettyProp{ case (ctx, problem) =>
+      try {
+        for (_ <- shrinkInferenceProblem(ctx, problem, isRoot=true)) {
+          // just expand stream in case it is lazy
+        }
+        true
+      } catch {
+        case NonFatal(e) =>
+          e.printStackTrace();
+          false
+      }
+    }}
+  }
 }

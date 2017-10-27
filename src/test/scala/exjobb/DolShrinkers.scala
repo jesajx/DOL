@@ -36,19 +36,20 @@ object DolShrinkers {
     case _ => Stream()
   }
 
-  def shrinkScopeIfPossible(scope: Scope, directlyUsedVars: Set[Symbol]): Scope = {
-    def bfs(usedVars: Set[Symbol]): Set[Symbol] = {
-      val reachable = usedVars.flatMap{x =>
-        NoFuture.allFreeVarsInType(scope(x))
-      }
-      val newUsedVars: Set[Symbol] = usedVars ++ reachable
-      if (newUsedVars.size == usedVars.size)
-        usedVars
-      else
-        bfs(newUsedVars)
+  @tailrec
+  def scopeBfs(scope: Scope, usedVars: Set[Symbol]): Set[Symbol] = {
+    val reachable = usedVars.flatMap{x =>
+      NoFuture.allFreeVarsInType(scope(x))
     }
+    val newUsedVars: Set[Symbol] = usedVars ++ reachable
+    if (newUsedVars.size == usedVars.size)
+      usedVars
+    else
+      scopeBfs(scope, newUsedVars)
+  }
 
-    val allUsedVars = bfs(directlyUsedVars)
+  def shrinkScopeIfPossible(scope: Scope, directlyUsedVars: Set[Symbol]): Scope = {
+    val allUsedVars = scopeBfs(scope, directlyUsedVars)
     allUsedVars.map{x => (x, scope(x))}.toMap
   }
 
@@ -205,16 +206,86 @@ object DolShrinkers {
 //  }
 
 
+  def shrinkDefInferenceProblem(ctx: GlobalContext, p: InferenceProblem.Def, localScope: Scope): Stream[(GlobalContext, InferenceProblem.Def)] = p match {
+    case (IFieldDef(a, aTerm) :? typ) =>
+      for {
+        (ctx2, aTerm2) <- shrinkInferenceProblem(ctx, aTerm, isRoot=false, localScope)
+      } yield (ctx2, IFieldDef(a, aTerm2) :? typ)
+    case (ITypeDef(a, aType)  :? typ) =>
+      Stream()
+    case (IAndDef(left, right) :? typ) =>
+      val leftShrinks = for {
+        (ctx2, left2)  <- shrinkDefInferenceProblem(ctx, left, localScope)
+      } yield (ctx2, IAndDef(left2, right) :? typ)
+      val rightShrinks = for {
+        (ctx2, right2)  <- shrinkDefInferenceProblem(ctx, right, localScope)
+      } yield (ctx2, IAndDef(left, right2) :? typ)
+      leftShrinks #::: rightShrinks
+  }
 
-  def shrinkInferenceProblem(tuple: (GlobalContext, InferenceProblem.Term)): Stream[(GlobalContext, InferenceProblem.Term)] = {
-    val (ctx, p) = tuple
+  def shrinkInferenceProblem(ctx: GlobalContext, p: InferenceProblem.Term, isRoot: Boolean, localScope: Scope = Map()): Stream[(GlobalContext, InferenceProblem.Term)] = {
     // TODO Handle prototypes properly!!!
-    InferenceProblem.subproblems(ctx, p).map{case (ctx2, p2) =>
-      val newGlobalScope = shrinkScopeIfPossible(ctx2.globalScope, InferenceProblem.freeVars(p2))
-      // TODO Also shrink scope by substituting TypeProjs with the type they
-      // are referencing?
-      (ctx2.copy(globalScope=newGlobalScope), p2)
+
+
+    val reduced = p match {
+      case (IObj(x, xType, defs) :? typ) =>
+        val shrinkDefs = for {
+          (ctx2, defs2) <- shrinkDefInferenceProblem(ctx, defs, localScope + (x -> xType))
+        } yield (ctx2, IObj(x, xType, defs2) :? typ)
+
+        // TODO also check xType for fields that can be removed
+        val neededFields = NoFuture.directFieldDecls(ctx.globalScope ++ localScope + (x -> xType), x).keys.map{_._2}
+        val haveFields = InferenceProblem.fieldnames(defs)
+        val deadFields = haveFields -- neededFields
+        val shrinkNumDefs = for {
+          a <- deadFields.toStream
+          defs2 <- InferenceProblem.remDef(defs, a)
+        } yield (ctx, IObj(x, xType, defs2) :? typ)
+
+        shrinkDefs #::: shrinkNumDefs
+      case (IFun(x, xType, body) :? typ) =>
+        if ((ctx.globalScope ++ localScope).contains(x)) ???
+        for {
+          (ctx2, body2) <- shrinkInferenceProblem(ctx, body, isRoot=false, localScope + (x -> xType))
+        } yield (ctx2, IFun(x, xType, body2) :? typ)
+      case (ILet(x, xTerm, resTerm) :? typ) =>
+        val xTermShrinks = for {
+          (ctx2, xTerm2) <- shrinkInferenceProblem(ctx, xTerm, isRoot=false, localScope)
+        } yield (ctx2, ILet(x, xTerm2, resTerm) :? typ)
+        val resTermShrinks = for {
+          (ctx2, resTerm2) <- shrinkInferenceProblem(ctx, resTerm, isRoot=false, localScope + (x -> xTerm.typ))
+        } yield (ctx2, ILet(x, xTerm, resTerm2) :? typ)
+        xTermShrinks #::: resTermShrinks
+      case _ => Stream()
     }
+
+    val replaceWithVar = p match {
+      case (IVar(_) :? _) => Stream()
+      case (_ :? typ) =>
+        if (NoFuture.allFreeVarsInType(typ).intersect(localScope.keySet).isEmpty) {
+          val (ctx2, x) = ctx.withNewSymbol()
+          val ctx3 = ctx2.withNewBinding(x -> typ)
+          Stream((ctx3, IVar(x) :? typ))
+        } else {
+          Stream()
+        }
+    }
+
+    val sub = if (isRoot) InferenceProblem.subproblems(ctx, p) else Stream()
+
+    val res = replaceWithVar #::: sub #::: reduced
+
+    if (isRoot && localScope != Map()) ???
+
+    if (isRoot)
+      res.map{case (ctx2, p2) =>
+        val newGlobalScope = shrinkScopeIfPossible(ctx2.globalScope, InferenceProblem.freeVars(p2))
+        // TODO Also shrink scope by substituting TypeProjs with the type they
+        // are referencing?
+        (ctx2.copy(globalScope=newGlobalScope), p2)
+      }
+    else
+      res
   }
 
 }

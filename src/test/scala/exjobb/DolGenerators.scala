@@ -28,8 +28,10 @@ object DolGenerators {
 
 
   sealed case class GlobalContext(globalScope: Scope = Map(), nextSymbol: Int = 0) {
-    def withNewBinding(binding: (Symbol, Type)): GlobalContext =
+    def withNewBinding(binding: (Symbol, Type)): GlobalContext = {
+      if (!NoFuture.allFreeVarsInType(binding._2).subsetOf(globalScope.keySet + binding._1)) ???
       copy(globalScope = globalScope+binding)
+    }
 
     def withNewSymbol(): (GlobalContext, Symbol) =
       (copy(nextSymbol = nextSymbol+1), nextSymbol)
@@ -59,8 +61,27 @@ object DolGenerators {
       sealed case class :?(d: IDefLHS, typ: Type)
     }
 
+    def fieldnames(p: InferenceProblem.Def): Set[Symbol] = p.d match {
+      case IFieldDef(a, _)      => Set(a)
+      case ITypeDef(_, _)       => Set()
+      case IAndDef(left, right) => fieldnames(left) ++ fieldnames(right)
+    }
 
+    def remDef(p: InferenceProblem.Def, a: Symbol): Option[InferenceProblem.Def] = p.d match {
+      case IFieldDef(b, _) => if (b == a) None else Some(p)
+      case ITypeDef(b, _)  => if (b == a) None else Some(p)
+      case IAndDef(left, right) =>
+        List(remDef(left, a), remDef(right, a)).flatten.reduceOption[InferenceProblem.Def]{
+          case (q1, q2) =>
+            IAndDef(q1, q2) :? AndType(q1.typ, q2.typ)
+        }
+    }
 
+    def typenames(p: InferenceProblem.Def): Set[Symbol] = p.d match {
+      case IFieldDef(_, _)      => Set()
+      case ITypeDef(a, _)       => Set(a)
+      case IAndDef(left, right) => typenames(left) ++ typenames(right)
+    }
 
     def assembleDef(p: InferenceProblem.Def): Dol.Def = p.d match {
       case IFieldDef(a, aTerm)  => Dol.FieldDef(a, assembleTerm(aTerm))
@@ -682,14 +703,33 @@ object DolGenerators {
       (ctx4, aType) <- genType(ctx3, Map()) // TODO obfuscate by adding other fields?
       ctx5 <- ctx4.newBinding(x -> FieldDecl(a, aType))
     } yield (ctx5, ISel(x, a) :? aType)
-    val fieldRefs = NoFuture.directFieldDeclsInScope(ctx.globalScope ++ localScope)
-    if (fieldRefs.isEmpty) {
+    val scope = ctx.globalScope ++ localScope
+    val selectableObjectsInScope = scope.map{case (x, xType) =>
+      x -> NoFuture.objStdDecl(scope, x, xType)
+    }.filter{case (_, o) => !o.fields.isEmpty || o.hasBot}
+
+    if (selectableObjectsInScope.isEmpty) {
       justMakeSomethingUp
     } else {
       val pickSomethingFromScope = for {
-        (Seq(x, a), aType) <- oneOf(fieldRefs.toSeq)
-      } yield (ctx, ISel(x, a) :? aType)
-      Gen.frequency((1, justMakeSomethingUp), (fieldRefs.size, pickSomethingFromScope))
+        (x, o) <- oneOf(selectableObjectsInScope.toSeq)
+
+        (ctx2, a, aType) <- {
+          val alt1 = o.fields.toSeq.map{
+            case (a, FieldDecl(_, aType)) => (ctx, a, aType)
+            case (a, Bot) => (ctx, a, Bot)
+            case _ => ???
+          }
+          val (ctx2, b) = ctx.withNewSymbol
+          val alt2 = if (o.hasBot) Seq((ctx, b, Bot)) else Seq()
+          oneOf(alt1 ++ alt2)
+        }
+
+      } yield (ctx2, ISel(x, a) :? aType)
+      val pickSomethingFromScopeCount = selectableObjectsInScope.map{case (_, o) =>
+        o.fields.size + (if (o.hasBot) 1 else 0)
+      }.sum
+      Gen.frequency((1, justMakeSomethingUp), (pickSomethingFromScopeCount, pickSomethingFromScope))
     }
   }
 
@@ -729,7 +769,11 @@ object DolGenerators {
       val genAndDef = for { // minSize = 5 = 1 AndDef + 2*min(FieldDef, TypeDef, AndDef).
         (leftSize, rightSize) <- splitSizeNonZero(size-1, min=2)
         (ctx2, left)  <- Gen.resize(leftSize, genSimpleDef(ctx, localScope, z))
-        (ctx3, right) <- Gen.resize(rightSize, genSimpleDef(ctx2, localScope + (z -> left.typ), z))
+        zTypeIncludingLeft <- const(localScope.get(z) match {
+          case Some(zType) => AndType(zType, left.typ)
+          case None => left.typ
+        })
+        (ctx3, right) <- Gen.resize(rightSize, genSimpleDef(ctx2, localScope + (z -> zTypeIncludingLeft), z))
       } yield (ctx3, IAndDef(left, right) :? AndType(left.typ, right.typ))
       oneOf(genFieldDef(ctx, localScope), genTypeDef(ctx, localScope), genAndDef)
     } else if (size >= 2)
@@ -745,7 +789,7 @@ object DolGenerators {
       (ctx2, x)    <- ctx.newSymbol()
       (ctx3, defs) <- Gen.resize(size - 1, genSimpleDef(ctx2, scope, x))
       xType        <- const(defs.typ) // TODO vs supertype. // TODO problem: how to determine size?
-    } yield (ctx3, IObj(x, xType, defs) :? xType)
+    } yield (ctx3, IObj(x, xType, defs) :? RecType(x, xType))
   }
 
   // TODO genComplexObjInferenceProblem
@@ -766,13 +810,13 @@ object DolGenerators {
 
   def genAppInferenceProblem(ctx: GlobalContext, scope: Scope): Gen[(GlobalContext, InferenceProblem.Term)] = {
     val genFromArg = for {
-      (ctx2, f)                                     <- ctx.newSymbol()
-      (ctx3, y)                                     <- ctx2.newSymbol()
+      (ctx2, f) <- ctx.newSymbol()
+      (ctx3, y) <- ctx2.newSymbol()
       (ctx4, funType @ FunType(x, xType, xResType)) <- genFunType(ctx3, Map()) // TODO make it so that this can generate a typeproj to a funtype
-      ctx5                                          <- ctx4.newBinding(f -> funType)
+      ctx5 <- ctx4.newBinding(f -> funType)
       (ctx6, argSubtype)                            <- genSubtype(ctx5, Map(), xType)
-      ctx7                                          <- ctx6.newBinding(y -> argSubtype)
-      appResType                                    <- const(NoFuture.typeRenameVar(x, y, xResType))
+      ctx7 <- ctx6.newBinding(y -> argSubtype)
+      appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
     } yield (ctx7, IApp(f, y) :? appResType)
 
     var funsInScope = ctx.globalScope.filter{ // TODO Can't use localScope since we need to introduce y, below.... Must either do Let(y, ...) or eliminate all vars in localScope before binding....
@@ -785,10 +829,10 @@ object DolGenerators {
     } else {
       val genFromScope = for {
         (f, FunType(x, xType, xResType)) <- oneOf(funsInScope.toSeq)
-        (ctx2, y)                        <- ctx.newSymbol()
-        (ctx3, yType)                    <- genSubtype(ctx2, Map(), xType) // TODO make it so that this can pick yType from scope.
-        ctx4                             <- ctx3.newBinding(y -> yType)
-        appResType                       <- const(NoFuture.typeRenameVar(x, y, xResType))
+        (ctx2, y) <- ctx.newSymbol()
+        (ctx3, yType) <- genSubtype(ctx2, Map(), xType) // TODO make it so that this can pick yType from scope.
+        ctx4 <- ctx3.newBinding(y -> yType)
+        appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
       } yield (ctx4, IApp(f, y) :? appResType)
       oneOf(genFromArg, genFromScope)
     }
@@ -811,5 +855,106 @@ object DolGenerators {
     genAppInferenceProblem(ctx, scope),
     genObjInferenceProblem(ctx, scope)
   )
+
+  object EqCheck {
+    type Term = EqCheck.Term.:!
+    type Def  = EqCheck.Def.:!
+    object Term {
+      sealed case class :!(term: EqCheckTermLHS, ok: EqCheck.Res)
+    }
+    object Def {
+      sealed case class :!(d: EqCheckDefLHS, ok: EqCheck.Res)
+    }
+
+    sealed trait Res
+    case object OK extends Res
+    case class Wrong(res: Type, expected: Type) extends Res
+  }
+
+  sealed trait EqCheckTermLHS {
+    def :!(ok: EqCheck.Res) = EqCheck.Term.:!(this, ok)
+  }
+  sealed trait EqCheckDefLHS {
+    def :!(ok: EqCheck.Res) = EqCheck.Def.:!(this, ok)
+  }
+
+  case class EqCheckVar(x: Symbol)                                         extends EqCheckTermLHS
+  case class EqCheckApp(x: Symbol, y: Symbol)                              extends EqCheckTermLHS
+  case class EqCheckLet(x: Symbol, xTerm: EqCheck.Term, resTerm: EqCheck.Term) extends EqCheckTermLHS
+  case class EqCheckSel(x: Symbol, a: Symbol)                              extends EqCheckTermLHS
+  case class EqCheckFun(x: Symbol, xType: Type, body: EqCheck.Term)          extends EqCheckTermLHS
+  case class EqCheckObj(x: Symbol, xType: Type, body: EqCheck.Def)           extends EqCheckTermLHS
+
+  case class EqCheckFieldDef(a: Symbol, aTerm: EqCheck.Term)    extends EqCheckDefLHS
+  case class EqCheckTypeDef(a: Symbol, aType: Type)           extends EqCheckDefLHS
+  case class EqCheckAndDef(left: EqCheck.Def, right: EqCheck.Def) extends EqCheckDefLHS
+
+  object :! {
+    def apply(lhs: EqCheckTermLHS, rhs: EqCheck.Res): EqCheck.Term = lhs :! rhs
+    def apply(lhs: EqCheckDefLHS, rhs: EqCheck.Res): EqCheck.Def = lhs :! rhs
+    def unapply(t: EqCheck.Term): Option[(EqCheckTermLHS, EqCheck.Res)] = Some((t.term, t.ok))
+    def unapply(t: EqCheck.Def): Option[(EqCheckDefLHS, EqCheck.Res)] = Some((t.d, t.ok))
+  }
+
+  def eqcheckDef(scope: Scope, first: Typed.Def, second: Typed.Def): EqCheck.Def = {
+      val (leftDef :- leftType)   = first
+      val (rightDef :- rightType) = second
+      val res =
+        if (NoFuture.equalTypes(scope, leftType, rightType))
+          EqCheck.OK
+        else
+          EqCheck.Wrong(leftType, rightType)
+      val lhs = (leftDef, rightDef) match {
+        case (TypedAndDef(l1, r1), TypedAndDef(l2, r2)) =>
+          EqCheckAndDef(
+            eqcheckDef(scope, l1, l2),
+            eqcheckDef(scope, r1, r2)
+          )
+        case (TypedFieldDef(a, aTerm), TypedFieldDef(b, bTerm)) =>
+          EqCheckFieldDef(a,
+            eqcheck(scope, aTerm, bTerm)
+          )
+        case (TypedTypeDef(a, aType), TypedTypeDef(b, bType)) =>
+          EqCheckTypeDef(a, aType)
+        case _ => ???
+      }
+      lhs :! res
+  }
+
+
+  def eqcheck(scope: Scope, first: Typed.Term, second: Typed.Term): EqCheck.Term = {
+    val (leftTerm :- leftType) = first
+    val (rightTerm :- rightType) = second
+      val res =
+        if (NoFuture.equalTypes(scope, leftType, rightType))
+          EqCheck.OK
+        else
+          EqCheck.Wrong(leftType, rightType)
+    val lhs = (leftTerm, rightTerm) match {
+      case (TypedLet(x, xTerm, xResTerm), TypedLet(y, yTerm, yResTerm)) =>
+        EqCheckLet(x,
+          eqcheck(scope, xTerm, yTerm),
+          eqcheck(scope + (x -> xTerm.typ), xResTerm, yResTerm)
+        )
+      case (TypedObj(x, xType, xBody), TypedObj(y, yType, yBody)) =>
+        EqCheckObj(x,
+          xType,
+          eqcheckDef(scope + (x -> xType), xBody, yBody)
+        )
+      case (TypedFun(x, xType, xBody), TypedFun(y, yType, yBody)) =>
+        EqCheckFun(x,
+          xType,
+          eqcheck(scope + (x -> xType), xBody, yBody)
+        )
+      case (TypedVar(x), TypedVar(y)) =>
+        EqCheckVar(x)
+      case (TypedApp(x, y), TypedApp(_, _)) =>
+        EqCheckApp(x, y)
+      case (TypedSel(x, a), TypedSel(_, _)) =>
+        EqCheckSel(x, a)
+      case _ => ???
+    }
+    lhs :! res
+  }
 
 }
