@@ -720,7 +720,7 @@ object Dol {
         case RecType(y, yType) if x != y =>
           inner(scope, x, typeRenameBoundVarAssumingNonFree(x, typ), visited)
         case RecType(y, yType) if x == y =>
-          inner(scope, x, yType, visited)
+          inner(scope + (x -> yType), x, yType, visited)
         case FieldDecl(a, _)       => ObjStdDecls(Map(a -> typ), Map(), false)
         case TypeDecl(a, _, _)     => ObjStdDecls(Map(), Map(a -> typ), false)
         case proj @ TypeProj(y, a) =>
@@ -747,6 +747,39 @@ object Dol {
           fields.map{case (a, aType) => (a -> simplify(aType))},
           types,
           hasBot)
+    }
+
+    sealed case class TypeClassification(isRecursive: Boolean = false, isField: Boolean = false, isTypeDecl: Boolean = false, isFunction: Boolean = false, isProj: Boolean = false, isBot: Boolean = false, isTop: Boolean = false, isQue: Boolean = false) {
+      def merge(that: TypeClassification): TypeClassification =
+        TypeClassification(
+          this.isRecursive || that.isRecursive,
+          this.isField || that.isField,
+          this.isTypeDecl || that.isTypeDecl,
+          this.isFunction || that.isFunction,
+          this.isProj || that.isProj,
+          this.isBot || that.isBot,
+          this.isTop || that.isTop,
+          this.isQue || that.isQue)
+    }
+
+    def typeClassify(scope: Scope, typ: Prototype): TypeClassification = {
+      def inner(scope: Scope, typ: Prototype, visited: Set[TypeProj]): TypeClassification = typ match {
+        case RecType(x, xType) =>
+          inner(scope + (x -> xType), xType, visited).merge(TypeClassification(isRecursive=true))
+        case FieldDecl(a, _)       => TypeClassification(isField=true)
+        case TypeDecl(a, _, _)     => TypeClassification(isTypeDecl=true)
+        case proj @ TypeProj(y, a) =>
+          inner(scope, typeProjectUpper(scope, y, a).get, visited + proj).merge(TypeClassification(isProj=true))
+        case Bot => TypeClassification(isBot=true)
+        case Top => TypeClassification(isTop=true)
+        case Que => TypeClassification(isBot=true)
+        case AndType(left, right) =>
+          inner(scope, left, visited).merge(inner(scope, right, visited))
+        case FunType(x, xType, xResType) => TypeClassification(isFunction=true)
+        case _ => ???
+      }
+
+      inner(scope, typ, Set())
     }
 
     def andConstraint(left: Constraint, right: Constraint): Constraint = (left, right) match {
@@ -2149,36 +2182,6 @@ object Dol {
     }
   }
 
-  def isPrototype(t: Type)(cont: (Boolean) => Unit): Unit = {
-    def zipIsPrototype(a: Type, b: Type): Unit = {
-      // TODO parallel?
-      isPrototype(a){yesA =>
-        isPrototype(b){yesB =>
-          cont(yesA || yesB)
-        }
-      }
-    }
-    t match {
-      case Que =>
-        cont(true)
-      case FunType(_, argType, resType) =>
-        zipIsPrototype(argType, resType)
-      case RecType(x, xType) =>
-        isPrototype(xType)(cont)
-      case FieldDecl(a, aType) =>
-        isPrototype(aType)(cont)
-      case TypeDecl(a, aLowerType, aUpperType) =>
-        zipIsPrototype(aLowerType, aUpperType)
-      case AndType(left, right) =>
-        zipIsPrototype(left, right)
-      case FutureType(cell) =>
-        onComplete(cell){actualType =>
-          isPrototype(actualType)(cont)
-        }
-      case _ => cont(false)
-    }
-  }
-
   def mapUnion[K, T, A <: T, B <: T](a: Map[K, A], b: Map[K, B])(f: (A, B) => T): Map[K, T] = {
     a ++ b.map{
       case (k, kValueInB) =>
@@ -2718,6 +2721,37 @@ object Dol {
 //    }
 //
 //
+//
+//    def isPrototype(t: Type)(cont: (Boolean) => Unit): Unit = {
+//      def zipIsPrototype(a: Type, b: Type): Unit = {
+//        // TODO parallel?
+//        isPrototype(a){yesA =>
+//          isPrototype(b){yesB =>
+//            cont(yesA || yesB)
+//          }
+//        }
+//      }
+//      t match {
+//        case Que =>
+//          cont(true)
+//        case FunType(_, argType, resType) =>
+//          zipIsPrototype(argType, resType)
+//        case RecType(x, xType) =>
+//          isPrototype(xType)(cont)
+//        case FieldDecl(a, aType) =>
+//          isPrototype(aType)(cont)
+//        case TypeDecl(a, aLowerType, aUpperType) =>
+//          zipIsPrototype(aLowerType, aUpperType)
+//        case AndType(left, right) =>
+//          zipIsPrototype(left, right)
+//        case FutureType(cell) =>
+//          onComplete(cell){actualType =>
+//            isPrototype(actualType)(cont)
+//          }
+//        case _ => cont(false)
+//      }
+//    }
+
   } // end class Parallel
 
   def typecheckInParallel(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: Prototype = Que, rootScope: Map[Symbol, Type] = Map()): Option[Term] = {

@@ -207,19 +207,19 @@ object DolShrinkers {
 
 
   def shrinkDefInferenceProblem(ctx: GlobalContext, p: InferenceProblem.Def, localScope: Scope): Stream[(GlobalContext, InferenceProblem.Def)] = p match {
-    case (IFieldDef(a, aTerm) :? typ) =>
+    case (IFieldDef(a, aTerm) :% proto :? typ) =>
       for {
         (ctx2, aTerm2) <- shrinkInferenceProblem(ctx, aTerm, isRoot=false, localScope)
-      } yield (ctx2, IFieldDef(a, aTerm2) :? typ)
-    case (ITypeDef(a, aType)  :? typ) =>
+      } yield (ctx2, IFieldDef(a, aTerm2) :% proto :? typ)
+    case (ITypeDef(a, aType) :% proto :? typ) =>
       Stream()
-    case (IAndDef(left, right) :? typ) =>
+    case (IAndDef(left, right) :% proto :? typ) =>
       val leftShrinks = for {
         (ctx2, left2)  <- shrinkDefInferenceProblem(ctx, left, localScope)
-      } yield (ctx2, IAndDef(left2, right) :? typ)
+      } yield (ctx2, IAndDef(left2, right) :% proto :? typ)
       val rightShrinks = for {
         (ctx2, right2)  <- shrinkDefInferenceProblem(ctx, right, localScope)
-      } yield (ctx2, IAndDef(left, right2) :? typ)
+      } yield (ctx2, IAndDef(left, right2) :% proto :? typ)
       leftShrinks #::: rightShrinks
   }
 
@@ -228,10 +228,10 @@ object DolShrinkers {
 
 
     val reduced = p match {
-      case (IObj(x, xType, defs) :? typ) =>
+      case (IObj(x, xType, defs) :% proto :? typ) =>
         val shrinkDefs = for {
           (ctx2, defs2) <- shrinkDefInferenceProblem(ctx, defs, localScope + (x -> xType))
-        } yield (ctx2, IObj(x, xType, defs2) :? typ)
+        } yield (ctx2, IObj(x, xType, defs2) :% proto :? typ)
 
         // TODO also check xType for fields that can be removed
         val neededFields = NoFuture.directFieldDecls(ctx.globalScope ++ localScope + (x -> xType), x).keys.map{_._2}
@@ -240,32 +240,32 @@ object DolShrinkers {
         val shrinkNumDefs = for {
           a <- deadFields.toStream
           defs2 <- InferenceProblem.remDef(defs, a)
-        } yield (ctx, IObj(x, xType, defs2) :? typ)
+        } yield (ctx, IObj(x, xType, defs2) :% proto :? typ)
 
         shrinkDefs #::: shrinkNumDefs
-      case (IFun(x, xType, body) :? typ) =>
+      case (IFun(x, xType, body) :% proto :? typ) =>
         if ((ctx.globalScope ++ localScope).contains(x)) ???
         for {
           (ctx2, body2) <- shrinkInferenceProblem(ctx, body, isRoot=false, localScope + (x -> xType))
-        } yield (ctx2, IFun(x, xType, body2) :? typ)
-      case (ILet(x, xTerm, resTerm) :? typ) =>
+        } yield (ctx2, IFun(x, xType, body2) :% proto :? typ)
+      case (ILet(x, xTerm, resTerm) :% proto :? typ) =>
         val xTermShrinks = for {
           (ctx2, xTerm2) <- shrinkInferenceProblem(ctx, xTerm, isRoot=false, localScope)
-        } yield (ctx2, ILet(x, xTerm2, resTerm) :? typ)
+        } yield (ctx2, ILet(x, xTerm2, resTerm) :% proto :? typ)
         val resTermShrinks = for {
           (ctx2, resTerm2) <- shrinkInferenceProblem(ctx, resTerm, isRoot=false, localScope + (x -> xTerm.typ))
-        } yield (ctx2, ILet(x, xTerm, resTerm2) :? typ)
+        } yield (ctx2, ILet(x, xTerm, resTerm2) :% proto :? typ)
         xTermShrinks #::: resTermShrinks
       case _ => Stream()
     }
 
     val replaceWithVar = p match {
-      case (IVar(_) :? _) => Stream()
-      case (_ :? typ) =>
+      case (IVar(_) :% proto :? _) => Stream()
+      case (_ :% proto :? typ) =>
         if (NoFuture.allFreeVarsInType(typ).intersect(localScope.keySet).isEmpty) {
           val (ctx2, x) = ctx.withNewSymbol()
           val ctx3 = ctx2.withNewBinding(x -> typ)
-          Stream((ctx3, IVar(x) :? typ))
+          Stream((ctx3, IVar(x) :% proto :? typ))
         } else {
           Stream()
         }
