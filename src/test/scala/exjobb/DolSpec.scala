@@ -26,7 +26,11 @@ object DolSpec extends Properties("DolSpec") { // TODO REM and use other specs d
     }
   }
 
-  includeMatching(DolTypecheckingSpec, ".*")
+  //includeMatching(DolShrinkSpec, ".*")
+  //includeMatching(DolShrinkSpec, ".*well-formed.*")
+  //includeMatching(DolTypecheckingSpec, ".*")
+  //includeMatching(DolTypecheckingSpec, ".*positiveSequentialInferenceProblem2.*")
+  includeMatching(DolTypecheckingSpec, ".*positiveSequentialInferenceProblem3.*")
   //includeMatching(DolSubtypingSpec, ".*largest.*")
   //includeMatching(DolSubtypingSpec, ".*smallest.*")
   //includeMatching(DolSubtypingSpec, ".*")

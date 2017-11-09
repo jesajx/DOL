@@ -243,19 +243,37 @@ object DolShrinkers {
         } yield (ctx, IObj(x, xType, defs2) :% proto :? typ)
 
         shrinkDefs #::: shrinkNumDefs
+
       case (IFun(x, xType, body) :% proto :? typ) =>
         if ((ctx.globalScope ++ localScope).contains(x)) ???
+
         for {
           (ctx2, body2) <- shrinkInferenceProblem(ctx, body, isRoot=false, localScope + (x -> xType))
         } yield (ctx2, IFun(x, xType, body2) :% proto :? typ)
+
       case (ILet(x, xTerm, resTerm) :% proto :? typ) =>
         val xTermShrinks = for {
           (ctx2, xTerm2) <- shrinkInferenceProblem(ctx, xTerm, isRoot=false, localScope)
         } yield (ctx2, ILet(x, xTerm2, resTerm) :% proto :? typ)
+
         val resTermShrinks = for {
           (ctx2, resTerm2) <- shrinkInferenceProblem(ctx, resTerm, isRoot=false, localScope + (x -> xTerm.typ))
         } yield (ctx2, ILet(x, xTerm, resTerm2) :% proto :? typ)
+
         xTermShrinks #::: resTermShrinks
+
+      case (ITApp(funTerm, argDefs) :% proto :? typ) =>
+
+        val funTermShrinks = for {
+          (ctx2, funTerm2) <- shrinkInferenceProblem(ctx, funTerm, isRoot=false, localScope)
+        } yield (ctx2, ITApp(funTerm2, argDefs) :% proto :? typ)
+
+        val argDefsShrinks = for {
+          (ctx2, argDefs2) <- shrinkDefInferenceProblem(ctx, argDefs, localScope)
+        } yield (ctx2, ITApp(funTerm, argDefs2) :% proto :? typ)
+
+        funTermShrinks #::: argDefsShrinks
+
       case _ => Stream()
     }
 

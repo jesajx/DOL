@@ -13,6 +13,7 @@ import org.scalacheck.Gen.oneOf
 import org.scalacheck.Gen.someOf
 import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
+import org.scalacheck.rng.Seed
 
 import DolGenerators._
 import DolShrinkers._
@@ -58,7 +59,7 @@ object DolShrinkSpec extends Properties("DolShrinkSpec") {
   property("shrinkInferenceProblem does not throw") = {
     val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
       ctx1  <- genGlobalScope()
-      (ctx2, problem) <- genInferenceProblem(ctx1, Map())
+      (ctx2, problem) <- genInferenceProblemFromPrototype(ctx1, Map(), Que)
     } yield (ctx2, problem)
     Prop.forAllNoShrink(generator){prettyProp{ case (ctx, problem) =>
       try {
@@ -73,4 +74,19 @@ object DolShrinkSpec extends Properties("DolShrinkSpec") {
       }
     }}
   }
+
+  property("gen is well-formed") = {
+    Prop.forAllNoShrink{ (seed: Long) =>
+      Prop.protect{
+        val opt = genInferenceProblemFromPrototype(GlobalContext(), Map(), Que)(Gen.Parameters.default, Seed(seed))
+        !opt.isEmpty ==> {
+          val (ctx, p) = opt.get
+          Prop.all(
+            InferenceProblem.wellFormed(ctx, p)
+          )
+        }
+      }
+    }
+  }
+
 }

@@ -13,6 +13,7 @@ import org.scalacheck.Gen.oneOf
 import org.scalacheck.Gen.someOf
 import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
+import org.scalacheck.rng.Seed
 
 import DolGenerators._
 import DolShrinkers._
@@ -119,6 +120,28 @@ object DolTypecheckingSpec extends Properties("DolTypecheckingSpec") { // TODO R
       }
     }
   }
+
+  property("positiveSequentialInferenceProblem3") = {
+    Prop.forAllNoShrink{(seed: Long) =>
+      val g = genInferenceProblemFromPrototype(GlobalContext(), Map(), Que)(Gen.Parameters.default, Seed(seed))
+      (g != None) ==> {
+        val (ctx, problem) = g.get
+
+        val p = InferenceProblem.assemble(ctx, problem)
+        prettyNamed("input", p) |: Prop.protect{
+          val res = NoFuture.typecheckTerm(p.su(), p.term, p.prototype, p.scope)
+
+          (prettyNamed("res", res) |:
+            prettyNamed("eqcheck", eqcheck(p.scope, res, p.expected)) |:
+            Prop.protect(
+              NoFuture.equalTerms(p.scope, res, p.expected)
+            )
+          )
+        }
+      }
+    }
+  }
+
 
   // TODO
 //  property("positiveParallelInferenceProblem") = {

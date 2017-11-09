@@ -301,19 +301,18 @@ object DolSubtypingSpec extends Properties("DolSubtypingSpec") {
 
 
   property("NoFuture.varLower -- a <: b ; p=gen(a) ==> lower(a, p) <: lower(b, p)") = {
-    val generator: Gen[(GlobalContext, Scope, Symbol, Symbol, Type, Type, Prototype)] = for {
+    val generator = for {
       ctx1 <- genGlobalScope()
       (ctx2, z) <- ctx1.newSymbol()
       (ctx3, k) <- ctx2.newSymbol()
       (ctx4, r) <- ctx3.newSymbol()
-      (ctx5, localScope) <- genScope(ctx4)
-      (ctx6, b) <- genType(ctx5, localScope)
-      (ctx7, a) <- genSubtype(ctx6, localScope, b)
-      ctx8      <- ctx7.newBinding(k -> a)
+      (ctx5, b) <- genType(ctx4, Map())
+      (ctx6, a) <- genSubtype(ctx5, Map(), b)
+      ctx7      <- ctx6.newBinding(k -> a)
       p <- genPrototypeFromType(a)
-    } yield (ctx8, localScope, r, z, a, b, p)
-    Prop.forAllNoShrink(generator){prettyProp{case (ctx, localScope, r, z, a, b, p) =>
-      val scope = ctx.globalScope ++ localScope
+    } yield (ctx7, r, z, a, b, p)
+    Prop.forAllNoShrink(generator){prettyProp{case (ctx, r, z, a, b, p) =>
+      val scope = ctx.globalScope
       val aLowerP = timeout(30.seconds){NoFuture.varLower(scope + (z -> a), r, z, p)}
       val bLowerP = timeout(30.seconds){NoFuture.varLower(scope + (z -> b), r, z, p)}
       (prettyNamed("bLowerP", bLowerP)

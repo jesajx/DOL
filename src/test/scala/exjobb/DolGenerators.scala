@@ -15,6 +15,7 @@ import org.scalacheck.Gen.listOf
 import org.scalacheck.Shrink
 
 import ScalaCheckUtils._
+import Pretty._
 
 object DolGenerators {
   // (su, prototype) -> (term, scope, typedterm)
@@ -28,10 +29,12 @@ object DolGenerators {
 
   sealed case class GlobalContext(globalScope: Scope = Map(), nextSymbol: Int = 0) {
     def withNewBinding(binding: (Symbol, Type)): GlobalContext = {
-      if (!NoFuture.allFreeVarsInType(binding._2).subsetOf(globalScope.keySet + binding._1))
-        throw new Exception("leakin local scope")
-      if (binding._1 >= nextSymbol)
-        throw new Exception("using symbol >= current counter")
+      val (x, xType) = binding
+      val freeVars = NoFuture.allFreeVarsInType(xType)
+      if (!freeVars.subsetOf(globalScope.keySet + x))
+        throw new Exception(s"leaking local scope $x -> ${freeVars -- (globalScope.keySet + x)}")
+      if (x >= nextSymbol)
+        throw new Exception(s"using symbol $x >= current counter $nextSymbol")
       copy(globalScope = globalScope+binding)
     }
 
@@ -116,6 +119,7 @@ object DolGenerators {
       case ISel(x, a)              => Dol.Sel(x, a)
       case IFun(x, xType, body)    => Dol.Fun(x, xType, assembleTerm(body))
       case IObj(x, xType, body)    => Dol.Obj(x, xType, assembleDef(body))
+      case ITApp(funTerm, argDefs) => Dol.TApp(assembleTerm(funTerm), assembleDef(argDefs))
     }
 
     def assembleTypedDef(p: InferenceProblem.Def): Typed.Def = p.d match {
@@ -125,12 +129,13 @@ object DolGenerators {
     }
 
     def assembleTypedTerm(p: InferenceProblem.Term): Typed.Term = p.term match {
-      case IVar(x)                 => TypedVar(x)                                                       :- p.typ
-      case IApp(x, y)              => TypedApp(x, y)                                                    :- p.typ
-      case ILet(x, xTerm, resTerm) => TypedLet(x, assembleTypedTerm(xTerm), assembleTypedTerm(resTerm)) :- p.typ
-      case ISel(x, a)              => TypedSel(x, a)                                                    :- p.typ
-      case IFun(x, xType, body)    => TypedFun(x, xType, assembleTypedTerm(body))                       :- p.typ
-      case IObj(x, xType, body)    => TypedObj(x, xType, assembleTypedDef(body))                        :- p.typ
+      case IVar(x)                 => TypedVar(x)                                                         :- p.typ
+      case IApp(x, y)              => TypedApp(x, y)                                                      :- p.typ
+      case ILet(x, xTerm, resTerm) => TypedLet(x, assembleTypedTerm(xTerm), assembleTypedTerm(resTerm))   :- p.typ
+      case ISel(x, a)              => TypedSel(x, a)                                                      :- p.typ
+      case IFun(x, xType, body)    => TypedFun(x, xType, assembleTypedTerm(body))                         :- p.typ
+      case IObj(x, xType, body)    => TypedObj(x, xType, assembleTypedDef(body))                          :- p.typ
+      case ITApp(funTerm, argDefs) => TypedTApp(assembleTypedTerm(funTerm), assembleTypedDef(argDefs)) :- p.typ
     }
 
 
@@ -149,6 +154,7 @@ object DolGenerators {
       case ILet(x, xTerm, resTerm) => Stream((ctx, xTerm), (ctx.withNewBinding(x -> xTerm.typ), resTerm))
       case IFun(x, xType, body)    => Stream((ctx.withNewBinding(x -> xType), body))
       case IObj(x, xType, body)    => defSubproblems(ctx.withNewBinding(x -> xType), body)
+      case ITApp(funTerm, argDefs) => (ctx, funTerm) #:: defSubproblems(ctx, argDefs)
       case _ => Stream()
     }
 
@@ -166,13 +172,20 @@ object DolGenerators {
       val termFree = p.term match {
         case IVar(x)                 => Set(x)
         case IApp(x, y)              => Set(x, y)
-        case ILet(x, xTerm, resTerm) => freeVars(xTerm) ++ freeVars(resTerm) - x
+        case ILet(x, xTerm, resTerm) => (freeVars(xTerm) ++ freeVars(resTerm)) - x
         case ISel(x, a)              => Set(x)
-        case IFun(x, xType, body)    => NoFuture.allFreeVarsInType(xType) ++ freeVars(body) - x
-        case IObj(x, xType, body)    => NoFuture.allFreeVarsInType(xType) ++ defFreeVars(body) - x
+        case IFun(x, xType, body)    => (NoFuture.allFreeVarsInType(xType) ++ freeVars(body)) - x
+        case IObj(x, xType, body)    => (NoFuture.allFreeVarsInType(xType) ++ defFreeVars(body)) - x
+        case ITApp(funTerm, argDefs) => freeVars(funTerm) ++ defFreeVars(argDefs)
       }
       val typeFree = NoFuture.allFreeVarsInType(p.typ)
       termFree ++ typeFree
+    }
+
+    def wellFormed(ctx: GlobalContext, p: InferenceProblem.Term): Boolean = {
+      val scope = ctx.globalScope
+      freeVars(p).subsetOf(scope.keySet)
+      subproblems(ctx, p).forall{case (ctx2, p2) => wellFormed(ctx2, p2)}
     }
   }
 
@@ -211,6 +224,8 @@ object DolGenerators {
   case class IFieldDef(a: Symbol, aTerm: InferenceProblem.Term)               extends IDefLHS
   case class ITypeDef(a: Symbol, aType: Type)                                 extends IDefLHS
   case class IAndDef(left: InferenceProblem.Def, right: InferenceProblem.Def) extends IDefLHS
+
+  case class ITApp(funTerm: InferenceProblem.Term, argDefs: InferenceProblem.Def)      extends ITermLHS
 
   // TODO Hide GlobalContext in monad?
   //
@@ -909,73 +924,79 @@ object DolGenerators {
       const(ctx -> prototype)
   }
 
-  def genDefFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Def)] = prototype match {
-    case Que =>
-      oneOf(
+  def genDefFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Def)] = Gen.sized {size =>
+    prototype match {
+      case Que =>
+        oneOf(
+          for {
+            (ctx2, a) <- ctx.newSymbol()
+            (ctx3, aTerm) <- genInferenceProblemFromPrototype(ctx2, localScope, Que)
+          } yield (ctx3, IFieldDef(a, aTerm) :% Que :? FieldDecl(a, aTerm.typ)),
+          for {
+            (ctx2, a) <- ctx.newSymbol()
+            (ctx3, aType) <- genType(ctx2, localScope)
+          } yield (ctx3, ITypeDef(a, aType) :% Que :? TypeDecl(a, aType, aType)),
+          for {
+            (ctx2, left) <- genDefFromPrototype(ctx, localScope, Que)
+            (ctx3, right) <- genDefFromPrototype(ctx2, localScope, Que)
+          } yield (ctx3, IAndDef(left, right) :% Que :? AndType(left.typ, right.typ))
+        )
+      case Top =>
+        oneOf(
+          for {
+            (ctx2, a) <- ctx.newSymbol()
+            (ctx3, aTerm) <- genInferenceProblemFromPrototype(ctx2, localScope, Top)
+          } yield (ctx3, IFieldDef(a, aTerm) :% Top :? Top),
+          for {
+            (ctx2, a) <- ctx.newSymbol()
+            (ctx3, aType) <- genType(ctx2, localScope)
+          } yield (ctx3, ITypeDef(a, aType) :% Top :? Top),
+          for {
+            (ctx2, left) <- genDefFromPrototype(ctx, localScope, Top)
+            (ctx3, right) <- genDefFromPrototype(ctx2, localScope, Top)
+          } yield (ctx3, IAndDef(left, right) :% Top :? Top)
+        )
+      case FieldDecl(a, aPrototype) =>
         for {
-          (ctx2, a) <- ctx.newSymbol()
-          (ctx3, aTerm) <- genInferenceProblemFromPrototype(ctx2, localScope, Que)
-        } yield (ctx3, IFieldDef(a, aTerm) :% Que :? FieldDecl(a, aTerm.typ)),
+          (ctx2, aTerm) <- genInferenceProblemFromPrototype(ctx, localScope, aPrototype)
+        } yield (ctx2, IFieldDef(a, aTerm) :% prototype :? FieldDecl(a, aTerm.typ))
+      case TypeDecl(a, aLowerPrototype, Que) =>
         for {
-          (ctx2, a) <- ctx.newSymbol()
-          (ctx3, aType) <- genType(ctx2, localScope)
-        } yield (ctx3, ITypeDef(a, aType) :% Que :? TypeDecl(a, aType, aType)),
+          (ctx2, aType) <- genTypeFromPrototype(ctx, localScope, aLowerPrototype)
+        } yield (ctx2, ITypeDef(a, aType) :% prototype :? TypeDecl(a, aType, aType))
+      case TypeDecl(a, Que, aUpperPrototype) =>
         for {
-          (ctx2, left) <- genDefFromPrototype(ctx, localScope, Que)
-          (ctx3, right) <- genDefFromPrototype(ctx2, localScope, Que)
-        } yield (ctx3, IAndDef(left, right) :% Que :? AndType(left.typ, right.typ))
-      )
-    case Top =>
-      oneOf(
+          (ctx2, aType) <- genTypeFromPrototype(ctx, localScope, aUpperPrototype)
+        } yield (ctx2, ITypeDef(a, aType) :% prototype :? TypeDecl(a, aType, aType))
+      case TypeDecl(a, aLowerType, aUpperType) if !NoFuture.isPrototype(prototype) =>
         for {
-          (ctx2, a) <- ctx.newSymbol()
-          (ctx3, aTerm) <- genInferenceProblemFromPrototype(ctx2, localScope, Top)
-        } yield (ctx3, IFieldDef(a, aTerm) :% Top :? Top),
-        for {
-          (ctx2, a) <- ctx.newSymbol()
-          (ctx3, aType) <- genType(ctx2, localScope)
-        } yield (ctx3, ITypeDef(a, aType) :% Top :? Top),
-        for {
-          (ctx2, left) <- genDefFromPrototype(ctx, localScope, Top)
-          (ctx3, right) <- genDefFromPrototype(ctx2, localScope, Top)
-        } yield (ctx3, IAndDef(left, right) :% Top :? Top)
-      )
-    case FieldDecl(a, aPrototype) =>
-      for {
-        (ctx2, aTerm) <- genInferenceProblemFromPrototype(ctx, localScope, aPrototype)
-      } yield (ctx2, IFieldDef(a, aTerm) :% prototype :? FieldDecl(a, aTerm.typ))
-    case TypeDecl(a, aLowerPrototype, Que) =>
-      for {
-        (ctx2, aType) <- genTypeFromPrototype(ctx, localScope, aLowerPrototype)
-      } yield (ctx2, ITypeDef(a, aType) :% prototype :? TypeDecl(a, aType, aType))
-    case TypeDecl(a, Que, aUpperPrototype) =>
-      for {
-        (ctx2, aType) <- genTypeFromPrototype(ctx, localScope, aUpperPrototype)
-      } yield (ctx2, ITypeDef(a, aType) :% prototype :? TypeDecl(a, aType, aType))
-    case TypeDecl(a, aLowerType, aUpperType) if !NoFuture.isPrototype(prototype) =>
-      for {
-        (ctx2, aType) <- genTypeFromPrototype(ctx, localScope, aLowerType) // TODO vs upper? vs somewhere between?
-      } yield (ctx2, ITypeDef(a, aType) :% prototype :? TypeDecl(a, aType, aType))
-    //case TypeDecl(a, aLowerPrototype, aUpperPrototype) =>
-    //  ??? // TODO aLowerPrototype <: aType <: aUpperPrototype
-    case AndType(leftPrototype, rightPrototype) =>
-      for { // TODO size split
-        (ctx2, left) <- genDefFromPrototype(ctx, localScope, leftPrototype)
-        (ctx3, right) <- genDefFromPrototype(ctx2, localScope, rightPrototype)
-      } yield (ctx2, IAndDef(left, right) :% prototype :? AndType(left.typ, right.typ))
-    case TypeProj(x, a) =>
-      ??? // TODO We should not allow this since it can lead to defining a field twice. Caller should prepare the prototype.
-    case _ => ???
+          (ctx2, aType) <- genTypeFromPrototype(ctx, localScope, aLowerType) // TODO vs upper? vs somewhere between?
+        } yield (ctx2, ITypeDef(a, aType) :% prototype :? TypeDecl(a, aLowerType, aUpperType))
+      //case TypeDecl(a, aLowerPrototype, aUpperPrototype) =>
+      //  ??? // TODO aLowerPrototype <: aType <: aUpperPrototype
+      case AndType(leftPrototype, rightPrototype) =>
+        for { // TODO size split
+          (ctx2, left) <- genDefFromPrototype(ctx, localScope, leftPrototype)
+          (ctx3, right) <- genDefFromPrototype(ctx2, localScope, rightPrototype)
+        } yield (ctx3, IAndDef(left, right) :% prototype :? AndType(left.typ, right.typ))
+      //case TypeProj(x, a) =>
+      //  // TODO Can't this lead to duplicate definitions? caller should check...
+      //  val aLowerType = NoFuture.typeProjectLower(ctx.globalScope ++ localScope, x, a).get // TODO watch out for inf rec?
+      //  for {
+      //    (ctx2, d) <- genDefFromPrototype(ctx, localScope, aLowerType)
+      //  } yield (ctx2, d)
+      //case _ => ???
+    }
   }
 
-
-  def genVarInferenceProblemFromPrototype(ctx: GlobalContext, scope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = {
+  def genVarInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = {
     // TODO search scope? only if !isPrototype(prototype) or prototype=Que?
     // TODO use NoFuture.varRaise? Should be fine assuming it has been tested "sufficiently"...
 
+    val prototype2 = NoFuture.eliminateVars(ctx.globalScope ++ localScope, localScope.keySet, None, prototype, Contravariant)
     val justMakeSomethingUp = for {
       (ctx2, x)     <- ctx.newSymbol()
-      (ctx3, xType) <- genTypeFromPrototype(ctx2, Map(), prototype)
+      (ctx3, xType) <- genTypeFromPrototype(ctx2, Map(), prototype2)
       ctx4          <- ctx3.newBinding(x -> xType)
     } yield (ctx4, IVar(x) :% prototype :? xType)
 
@@ -997,10 +1018,12 @@ object DolGenerators {
   def genSelInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = {
     // TODO search scope for matches?
     // TODO genVarInferenceProblemFromPrototype(ctx, localScope, FieldDecl(a, prototype)?
+
+    val prototype2 = NoFuture.eliminateVars(ctx.globalScope ++ localScope, localScope.keySet, None, prototype, Contravariant)
     val justMakeSomethingUp = for {
       (ctx2, x) <- ctx.newSymbol()
       (ctx3, a) <- ctx2.newSymbol()
-      (ctx4, aType) <- genTypeFromPrototype(ctx3, Map(), prototype)
+      (ctx4, aType) <- genTypeFromPrototype(ctx3, Map(), prototype2)
       ctx5 <- ctx4.newBinding(x -> FieldDecl(a, aType))
     } yield (ctx5, ISel(x, a) :% prototype :? aType)
     justMakeSomethingUp
@@ -1009,25 +1032,39 @@ object DolGenerators {
   def genAppInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = {
     // TODO grab fun from scope?
     // TODO grab arg from scope?
+
+    val prototype2 = NoFuture.eliminateVars(ctx.globalScope ++ localScope, localScope.keySet, None, prototype, Contravariant)
     val genFromRes = for {
       (ctx2, f) <- ctx.newSymbol()
       (ctx3, y) <- ctx2.newSymbol()
       (ctx4, x) <- ctx3.newSymbol()
-      (ctx5, funType @ FunType(_, xType, xResType)) <- genTypeFromPrototype(ctx4, Map(), FunType(x, Que, prototype))
+      (ctx5, funType @ FunType(_, xType, xResType)) <- genTypeFromPrototype(ctx4, Map(), FunType(x, Que, prototype2))
       ctx6 <- ctx5.withNewBinding(f -> funType)
       ctx7 <- ctx6.withNewBinding(y -> xType)
 
       appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
     } yield (ctx7, IApp(f, y) :% prototype :? appResType)
 
-    genFromRes
+    val genTApp = for {
+      (ctx2, x) <- ctx.newSymbol()
+      (ctx3, argType) <- genRecType(ctx2, localScope) // TODO since we have a variable for unwrapping argDefs, this does not have to be recursive.
+      (ctx4, funTerm) <- genInferenceProblemFromPrototype(ctx3, localScope, FunType(x, argType, prototype)) // TODO wrong. must be Que.
+      (FunType(w, wType, wResType)) <- const(funTerm.typ)
+      argPrototype <- const(NoFuture.objStdDecl(ctx4.globalScope ++ localScope, x, wType).toType)
+      argPrototype2 <- const(NoFuture.eliminateVars(ctx4.globalScope ++ localScope + (x -> argPrototype), Set(x), Some(x), argPrototype, Contravariant))
+      (ctx5, argDefs) <- genDefFromPrototype(ctx4, localScope, argPrototype2) // TODO leave out some typeargs to be inferred
+      appResType <- const(NoFuture.eliminateVars(ctx5.globalScope ++ localScope + (x -> argDefs.typ), Set(x), None, NoFuture.typeRenameVar(w, x, wResType)))
+    } yield (ctx5, ITApp(funTerm, argDefs) :% prototype :? appResType)
+
+    oneOf(genFromRes, genTApp)
   }
 
   def genObjInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = prototype match {
     case Que =>
       for {
         (ctx2, RecType(x, xType)) <- genRecType(ctx, localScope)
-        (ctx3, defs) <- genDefFromPrototype(ctx2, localScope + (x -> xType), xType) // TODO check that xType makes is not a function or typeproj?
+        defType <- const(NoFuture.objStdDecl(ctx2.globalScope ++ localScope, x, xType).toType)
+        (ctx3, defs) <- genDefFromPrototype(ctx2, localScope + (x -> xType), defType) // TODO check that xType makes is not a function or typeproj?
       } yield (ctx3, IObj(x, xType, defs) :% Que :? RecType(x, xType))
     case Top =>
       for {
@@ -1035,54 +1072,84 @@ object DolGenerators {
         (ctx3, defs) <- genDefFromPrototype(ctx2, localScope, Top)
       } yield (ctx3, IObj(x, Top, defs) :% Top :? Top)
     case RecType(x, xType) =>
-      if (NoFuture.isPrototype(xType)) ???
+      if (NoFuture.isPrototype(xType))
+        ???
       for {
-        (ctx2, defs) <- genDefFromPrototype(ctx, localScope + (x -> xType), xType) // TODO check that xType makes is not a function or typeproj?
+        defType <- const(NoFuture.objStdDecl(ctx.globalScope ++ localScope, x, xType).toType)
+        (ctx2, defs) <- genDefFromPrototype(ctx, localScope + (x -> xType), defType) // TODO check that xType makes is not a function or typeproj?
       } yield (ctx2, IObj(x, xType, defs) :% prototype :? prototype)
-    case TypeProj(x, a) =>
-      val aLowerType = NoFuture.typeProjectLower(ctx.globalScope ++ localScope, x, a).get // TODO watch out for inf rec?
-      for {
-        (ctx2, IObj(y, yType, defs) :% _ :? _) <- genObjInferenceProblemFromPrototype(ctx, localScope, aLowerType)
-      } yield (ctx2, IObj(y, yType, defs) :% TypeProj(x, a) :? TypeProj(x, a))
-    case _ => ???
+    case _ => ??? // NOTE: We can't raise a rectype to fielddecl/typedecl without a var.
   }
 
-//  def genFunInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, y: Symbol, yPrototype: Prototype, yResPrototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = for { // TODO might be intersection of many functions
-//    // TODO what if yResPrototype=TypeProj(y,a) and yPrototype=Que?
-//
-//    (ctx2, x) <- ctx.newSymbol()
-//    (ctx3, yType) <- genTypeFromPrototype(ctx, localScope, yPrototype)
-//    xResType  <- const(NoFuture.typeRenameVar(y, x, yResPrototype))
-//    (ctx4, body) <- genInferenceProblemFromPrototype(ctx3, localScope + (x -> yType), xResType)
-//  } yield (ctx4, IFun(x, yType, body) :% FunType(y, yPrototype, yResPrototype) :? FunType(x, yType, body.typ))
+  def commonsubFun(scope: Scope, left: Type, right: Type): Option[Type] = (left, right) match {
+    case (Top, Que) => Some(Top) // TODO vs Que?
+    case (Que, Top) => Some(Top)
+    case (Top | Que, _) => Some(right)
+    case (_, Top | Que) => Some(left)
+    case (FunType(x, xType, xResType), FunType(y, yType, yResType)) =>
+      None
+      // TODO bad: may end up with argType=Top and resType=arg.T
+      //Some(FunType(x,
+      //  NoFuture.leastCommonSupertype(scope, xType, yType),
+      //  NoFuture.greatestCommonSubtype(scope, xResType, NoFuture.typeRenameBoundVarAssumingNonFree(x, yResType))))
+    case _ => None
+  }
+
+  def asFun(scope: Scope, typ: Prototype): Option[Type] = typ match {
+    case fun: FunType => Some(fun)
+    case Top => Some(Top)
+    case Que => Some(Que)
+    case TypeProj(x, a) =>
+      asFun(scope, NoFuture.typeProjectLower(scope, x, a).get) // TODO watch out for inf rec?
+    case AndType(left, right) =>
+      for {
+        leftFun <- asFun(scope, left)
+        rightFun <- asFun(scope, right)
+        commonFun <- commonsubFun(scope, leftFun, rightFun)
+      } yield commonFun
+    case _ => None
+  }
+
+  def commonsubObj(scope: Scope, left: Type, right: Type): Option[Type] = (left, right) match {
+    case (Top | Que, _) => Some(right)
+    case (_, Top | Que) => Some(left)
+    case _ => None
+  }
+
+  def asObj(scope: Scope, typ: Prototype): Option[Type] = typ match {
+    case rec: RecType => Some(rec) // TODO check inside rec?
+    case Top => Some(Top)
+    case Que => Some(Que)
+    case TypeProj(x, a) =>
+      asObj(scope, NoFuture.typeProjectLower(scope, x, a).get) // TODO watch out for inf rec?
+    case AndType(left, right) =>
+      for {
+        leftObj <- asObj(scope, left)
+        rightObj <- asObj(scope, right)
+        res <- commonsubObj(scope, leftObj, rightObj)
+      } yield res
+    case _ => None
+  }
 
   def genFunInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = prototype match {
-    case FunType(y, yPrototype, yResPrototype) =>
-      for { // TODO might be intersection of many functions
-        // TODO what if yResPrototype=TypeProj(y,a) and yPrototype=Que?
-
-        (ctx2, x) <- ctx.newSymbol()
-        (ctx3, yType) <- genTypeFromPrototype(ctx2, localScope, yPrototype)
-        xResType  <- const(NoFuture.typeRenameVar(y, x, yResPrototype))
-        (ctx4, body) <- genInferenceProblemFromPrototype(ctx3, localScope + (x -> yType), xResType)
-      } yield (ctx4, IFun(x, yType, body) :% FunType(y, yPrototype, yResPrototype) :? FunType(x, yType, body.typ))
-    case TypeProj(x, a) =>
-      val aLowerType = NoFuture.typeProjectLower(ctx.globalScope ++ localScope, x, a).get // TODO watch out for inf rec?
-      for {
-        (ctx2, IFun(y, yType, defs) :% _ :? _) <- genObjInferenceProblemFromPrototype(ctx, localScope, aLowerType)
-      } yield (ctx2, IFun(y, yType, defs) :% TypeProj(x, a) :? TypeProj(x, a))
-    case AndType(left, right) =>
-      ??? // TODO FunType(x, glb(argtypes), lub(resultypes))?
     case Top =>
       for {
         (ctx2, x) <- ctx.newSymbol()
         (ctx3, p) <- genFunInferenceProblemFromPrototype(ctx2, localScope, FunType(x, Bot, Top))
-      } yield (ctx3, p)
+      } yield (ctx3, p.term :% Top :? Top)
     case Que =>
       for {
         (ctx2, x) <- ctx.newSymbol()
         (ctx3, p) <- genFunInferenceProblemFromPrototype(ctx2, localScope, FunType(x, Que, Que))
-      } yield (ctx3, p)
+      } yield (ctx3, p.term :% Que :? p.typ)
+    case FunType(y, yPrototype, yResPrototype) =>
+      if (yPrototype == Top && NoFuture.allFreeVarsInType(yResPrototype).contains(y))???
+      for { // TODO what if yResPrototype=TypeProj(y,a) and yPrototype=Que? can this happen?
+        (ctx2, x) <- ctx.newSymbol()
+        (ctx3, yType) <- genTypeFromPrototype(ctx2, localScope, yPrototype)
+        xResPrototype  <- const(NoFuture.typeRenameVar(y, x, yResPrototype))
+        (ctx4, body) <- genInferenceProblemFromPrototype(ctx3, localScope + (x -> yType), xResPrototype)
+      } yield (ctx4, IFun(x, yType, body) :% prototype :? FunType(x, yType, body.typ))
     case _ =>
       ???
   }
@@ -1090,17 +1157,70 @@ object DolGenerators {
 
   def cond[T](c: Boolean)(x: => T): Option[T] = if (c) Some(x) else None
 
+  sealed case class TypeClassification(isRecursive: Boolean = false, isField: Boolean = false, isTypeDecl: Boolean = false, isFunction: Boolean = false, isProj: Boolean = false, isBot: Boolean = false, isTop: Boolean = false, isQue: Boolean = false) {
+    def merge(that: TypeClassification): TypeClassification =
+      TypeClassification(
+        this.isRecursive || that.isRecursive,
+        this.isField || that.isField,
+        this.isTypeDecl || that.isTypeDecl,
+        this.isFunction || that.isFunction,
+        this.isProj || that.isProj,
+        this.isBot || that.isBot,
+        this.isTop || that.isTop,
+        this.isQue || that.isQue)
+  }
+
+  def typeClassify(scope: Scope, typ: Prototype): TypeClassification = {
+    def inner(scope: Scope, typ: Prototype, visited: Set[TypeProj]): TypeClassification = typ match {
+      case RecType(x, xType) =>
+        inner(scope + (x -> xType), xType, visited).merge(TypeClassification(isRecursive=true))
+      case FieldDecl(a, _)       => TypeClassification(isField=true)
+      case TypeDecl(a, _, _)     => TypeClassification(isTypeDecl=true)
+      case proj @ TypeProj(y, a) =>
+        val upperCl = inner(scope, NoFuture.typeProjectUpper(scope, y, a).get, visited + proj)
+        val lowerCl = inner(scope, NoFuture.typeProjectLower(scope, y, a).get, visited + proj)
+        upperCl.merge(lowerCl).merge(TypeClassification(isProj=true))
+      case Bot => TypeClassification(isBot=true)
+      case Top => TypeClassification(isTop=true)
+      case Que => TypeClassification(isBot=true)
+      case AndType(left, right) =>
+        inner(scope, left, visited).merge(inner(scope, right, visited))
+      case FunType(x, xType, xResType) => TypeClassification(isFunction=true)
+      case _ => ???
+    }
+
+    inner(scope, typ, Set())
+  }
+
+
   def genInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = {
-    val cl = NoFuture.typeClassify(ctx.globalScope ++ localScope, prototype)
+    val cl = typeClassify(ctx.globalScope ++ localScope, prototype)
 
-    val needsDefs = cl.isField || cl.isTypeDecl
+    val isDecl = cl.isField || cl.isTypeDecl
 
-    val maybes = List(
-      cond(!needsDefs && !cl.isBot){genFunInferenceProblemFromPrototype(ctx, localScope, prototype)},
-      cond(!needsDefs && !cl.isBot){genObjInferenceProblemFromPrototype(ctx, localScope, prototype)})
+    // TODO problem: might be andtype where only one part is recursive while
+    // the rest is not.
+
+    val funOpt = asFun(ctx.globalScope ++ localScope, prototype).map{prototype2 =>
+      for {
+        (ctx2, p) <- genFunInferenceProblemFromPrototype(ctx, localScope, prototype2)
+        //_ <- const{
+        //  if (prototype == Top && p.typ == Top) ???
+        //}
+      } yield (ctx2, p.term :% prototype :? p.typ)
+    }
+    val objOpt = asObj(ctx.globalScope ++ localScope, prototype).filter{_ => !cl.isBot && !cl.isFunction}.map{prototype2 =>
+      for {
+        (ctx2, p) <- genObjInferenceProblemFromPrototype(ctx, localScope, prototype2)
+        //_ <- const{
+        //  if (prototype == Top && p.typ == Top) ???
+        //}
+      } yield (ctx2, p.term :% prototype :? p.typ)
+    }
+
 
     oneOfGens(
-      maybes.flatten ++ List(
+      List(funOpt, objOpt).flatten ++ List(
         genVarInferenceProblemFromPrototype(ctx, localScope, prototype),
         genLetInferenceProblemFromPrototype(ctx, localScope, prototype),
         genSelInferenceProblemFromPrototype(ctx, localScope, prototype),
@@ -1139,6 +1259,8 @@ object DolGenerators {
   case class EqCheckFieldDef(a: Symbol, aTerm: EqCheck.Term)    extends EqCheckDefLHS
   case class EqCheckTypeDef(a: Symbol, aType: Type)           extends EqCheckDefLHS
   case class EqCheckAndDef(left: EqCheck.Def, right: EqCheck.Def) extends EqCheckDefLHS
+
+  case class EqCheckTApp(funTerm: EqCheck.Term, argDef: EqCheck.Def)   extends EqCheckTermLHS
 
   object :! {
     def apply(lhs: EqCheckTermLHS, rhs: EqCheck.Res): EqCheck.Term = lhs :! rhs
@@ -1185,18 +1307,19 @@ object DolGenerators {
       case (TypedLet(x, xTerm, xResTerm), TypedLet(y, yTerm, yResTerm)) =>
         EqCheckLet(x,
           eqcheck(scope, xTerm, yTerm),
-          eqcheck(scope + (x -> xTerm.typ), xResTerm, yResTerm)
-        )
+          eqcheck(scope + (x -> xTerm.typ), xResTerm, yResTerm))
       case (TypedObj(x, xType, xBody), TypedObj(y, yType, yBody)) =>
         EqCheckObj(x,
           xType,
-          eqcheckDef(scope + (x -> xType), xBody, yBody)
-        )
+          eqcheckDef(scope + (x -> xType), xBody, yBody))
       case (TypedFun(x, xType, xBody), TypedFun(y, yType, yBody)) =>
         EqCheckFun(x,
           xType,
-          eqcheck(scope + (x -> xType), xBody, yBody)
-        )
+          eqcheck(scope + (x -> xType), xBody, yBody))
+      case (TypedTApp(leftFunTerm, leftArgDefs), TypedTApp(rightFunTerm, rightArgDefs)) =>
+        EqCheckTApp(
+          eqcheck(scope, leftFunTerm, rightFunTerm),
+          eqcheckDef(scope, leftArgDefs, rightArgDefs))
       case (TypedVar(x), TypedVar(y)) =>
         EqCheckVar(x)
       case (TypedApp(x, y), TypedApp(_, _)) =>
