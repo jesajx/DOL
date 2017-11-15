@@ -15,14 +15,15 @@ object TestMain {
   def main(args: Array[String]): Unit = {
 //lowerdebug()
 //raisedebug()
-debugsub()
+//debugsub()
 //debugvarrename()
 //debuglub()
-debuglub3()
+//debuglub3()
 //debuglubmin()
 //debugproj()
 //debugelim()
 //debugtc()
+debugpartc()
 //debuggen()
 }
 
@@ -4033,65 +4034,447 @@ val (GlobalContext(globalScope, nextSymbol), r, z, a, p): (GlobalContext, Symbol
 //  ),
 //  1,
 //  0,
-//  FunType(
-//    15,
-//    AndType(
-//      RecType(16, FunType(17, TypeProj(18, 19), TypeProj(18, 19))),
-//      FunType(
-//        20,
-//        AndType(
-//          FieldDecl(21, AndType(Top, FieldDecl(22, Bot))),
-//          FunType(
-//            23,
-//            AndType(FieldDecl(24, Top), Top),
-//            FieldDecl(25, Bot)
-//          )
-//        ),
-//        TypeProj(12, 13)
-//      )
-//    ),
-//    TypeProj(26, 27)
-//  ),
 //  //FunType(
 //  //  15,
 //  //  AndType(
 //  //    RecType(16, FunType(17, TypeProj(18, 19), TypeProj(18, 19))),
-//  //    FunType(20, AndType(Que, Que), Que)
+//  //    FunType(
+//  //      20,
+//  //      AndType(
+//  //        FieldDecl(21, AndType(Top, FieldDecl(22, Bot))),
+//  //        FunType(
+//  //          23,
+//  //          AndType(FieldDecl(24, Top), Top),
+//  //          FieldDecl(25, Bot)
+//  //        )
+//  //      ),
+//  //      TypeProj(12, 13)
+//  //    )
 //  //  ),
 //  //  TypeProj(26, 27)
-//  //)
+//  //),
+//  FunType(
+//    15,
+//    AndType(
+//      RecType(16, FunType(17, TypeProj(18, 19), TypeProj(18, 19))),
+//      FunType(20, AndType(Que, Que), Que)
+//    ),
+//    TypeProj(26, 27)
+//  ),
 //  FunType(15, AndType(Que, FunType(20, Que, Que)), TypeProj(26, 27))
 //)
 
-(
+//(
+//  GlobalContext(
+//    Map(
+//    ),
+//    20
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    FieldDecl(7, Top),
+//    AndType(
+//      FieldDecl(8, Top),
+//      FunType(
+//        3,
+//        Bot,
+//        Top
+//      )
+//    )
+//  ),
+//  RecType(2,
+//    AndType(
+//      FieldDecl(7, Top),
+//      FunType(
+//        3,
+//        Bot,
+//        Top
+//      )
+//    )
+//  )
+//)
+
+//( // TODO
+//  GlobalContext(
+//    Map(
+//    2 -> RecType(
+//      3,
+//      AndType(
+//        TypeDecl(4, Bot, Bot),
+//        AndType(
+//          AndType(
+//            FieldDecl(5, RecType(6, Top)),
+//            FieldDecl(7, TypeProj(3, 4))
+//          ),
+//          AndType(FieldDecl(8, Bot), FieldDecl(9, Bot))
+//        )
+//      )
+//    )
+//    ),
+//  14),
+//  1,
+//  0,
+//  AndType(
+//    FunType(10, Top, RecType(11, Bot)),
+//    FunType(12, Top, FunType(13, Bot, Top))
+//  ),
+//  //FunType(10, Top, RecType(11, Bot))
+//  FunType(10, Que, Que) // TODO "inconsistent"
+//)
+
+//( // TODO
+//  GlobalContext(
+//    Map(
+//      8 -> TypeDecl(9, Bot, Top),
+//      10 -> TypeDecl(
+//        11,
+//        AndType(AndType(Bot, FieldDecl(15, Bot)), Top),
+//        AndType(FieldDecl(12, Bot), FieldDecl(13, RecType(14, Bot)))
+//      ),
+//      5 -> TypeDecl(
+//        6,
+//        AndType(Bot, TypeProj(10, 11)),
+//        FunType(7, TypeProj(8, 9), TypeProj(10, 11))
+//      ),
+//      20 -> TypeDecl(21, Bot, Bot),
+//    2 -> AndType(TypeDecl(3, Bot, Bot), FieldDecl(4, TypeProj(5, 6))),
+//    16 -> TypeProj(5, 6)
+//    ),
+//    22
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    FunType(17, Top, RecType(18, Top)),
+//    FunType(19, AndType(Bot, TypeProj(20, 21)), Bot)
+//  ),
+//  //FunType(17, Top, RecType(18, Top))
+//  FunType(17, Que, Que) // TODO "inconsistent"
+//)
+
+//( // TODO
+//  GlobalContext(
+//    Map(
+//      6 -> TypeDecl(7, Bot, Bot),
+//      12 -> TypeDecl(13, Bot, Bot),
+//      10 -> TypeDecl(11, TypeProj(12, 13), Bot),
+//      2 -> Top
+//    ),
+//    15
+//  ),
+//  1,
+//  0,
+//  AndType(
+//    FunType(
+//      3,
+//      AndType(
+//        FieldDecl(4, Top),
+//        TypeDecl(5, TypeProj(6, 7), TypeProj(6, 7))
+//      ),
+//      AndType(
+//        FieldDecl(8, TypeProj(6, 7)),
+//        FieldDecl(9, TypeProj(10, 11))
+//      )
+//    ),
+//    FunType(14, TypeProj(10, 11), TypeProj(10, 11))
+//  ),
+//  //FunType(
+//  //  3,
+//  //  AndType(
+//  //    FieldDecl(4, Top),
+//  //    TypeDecl(5, TypeProj(6, 7), TypeProj(6, 7))
+//  //  ),
+//  //  AndType(
+//  //    FieldDecl(8, TypeProj(6, 7)),
+//  //    FieldDecl(9, TypeProj(10, 11))
+//  //  )
+//  //),
+//  FunType(3, Que, AndType(Que, FieldDecl(9, Que))) // TODO "inconsistent"
+//)
+
+
+//( // TODO
+//  GlobalContext(
+//    Map(
+//      25 -> TypeDecl(
+//        26,
+//        AndType(
+//          AndType(Bot, Bot),
+//          RecType(27, TypeDecl(28, Bot, TypeProj(18, 19)))
+//        ),
+//        AndType(
+//          AndType(Bot, Bot),
+//          RecType(27, TypeDecl(28, Bot, TypeProj(18, 19)))
+//        )
+//      ),
+//      21 -> TypeDecl(
+//        22,
+//        TypeProj(23, 24),
+//        AndType(
+//          FunType(
+//            5,
+//            FunType(6, TypeProj(7, 8), Bot),
+//            AndType(
+//              TypeDecl(
+//                12,
+//                TypeProj(16, 17),
+//                RecType(
+//                  13,
+//                  AndType(
+//                    AndType(
+//                      TypeDecl(14, Bot, Top),
+//                      TypeDecl(15, TypeProj(7, 8), TypeProj(7, 8))
+//                    ),
+//                    TypeProj(7, 8)
+//                  )
+//                )
+//              ),
+//              TypeDecl(20, Bot, TypeProj(16, 17))
+//            )
+//          ),
+//          TypeProj(7, 8)
+//        )
+//      ),
+//      7 -> TypeDecl(
+//        8,
+//        Bot,
+//        FunType(
+//          9,
+//          RecType(10, TypeDecl(11, Bot, Bot)),
+//          TypeProj(9, 11)
+//        )
+//      ),
+//      18 -> TypeDecl(19, Bot, Bot),
+//      16 -> TypeDecl(17, TypeProj(18, 19), TypeProj(18, 19)),
+//      23 -> TypeDecl(24, Bot, TypeProj(25, 26)),
+//  2 -> RecType(3, AndType(Bot, RecType(4, Top)))
+//    ),
+//    29
+//  ),
+//  1,
+//  0,
+//  TypeProj(21, 22),
+//  //FunType(
+//  //  5,
+//  //  FunType(6, TypeProj(7, 8), Bot),
+//  //  AndType(
+//  //    TypeDecl(
+//  //      12,
+//  //      TypeProj(16, 17),
+//  //      RecType(
+//  //        13,
+//  //        AndType(
+//  //          AndType(
+//  //            TypeDecl(14, Bot, Top),
+//  //            TypeDecl(15, TypeProj(7, 8), TypeProj(7, 8))
+//  //          ),
+//  //          TypeProj(7, 8)
+//  //        )
+//  //      )
+//  //    ),
+//  //    TypeDecl(20, Bot, TypeProj(16, 17))
+//  //  )
+//  //),
+//  FunType(5, Que, Que) // TODO "inconsistent"
+//)
+
+( // TODO
   GlobalContext(
     Map(
+      28 -> TypeDecl(
+        29,
+        TypeProj(30, 31),
+        FunType(27, AndType(Top, Top), Bot)
+      ),
+      38 -> TypeDecl(39, Bot, Bot),
+      9 -> TypeDecl(10, Bot, Bot),
+      32 -> TypeDecl(33, AndType(Bot, Top), TypeProj(34, 35)),
+      34 -> TypeDecl(35, TypeProj(36, 37), AndType(Bot, TypeProj(9, 10))),
+      7 -> TypeDecl(8, AndType(Bot, Bot), AndType(Top, TypeProj(9, 10))),
+      3 -> TypeDecl(
+        4,
+        AndType(TypeProj(32, 33), FieldDecl(40, Top)),
+        AndType(
+          AndType(
+            FieldDecl(5, Bot),
+            TypeDecl(6, Bot, TypeProj(7, 8))
+          ),
+          AndType(
+            FieldDecl(
+              11,
+              RecType(
+                12,
+                RecType(
+                  13,
+                  AndType(
+                    FieldDecl(
+                      14,
+                      FieldDecl(
+                        15,
+                        TypeDecl(
+                          16,
+                          Bot,
+                          FunType(
+                            17,
+                            FieldDecl(18, TypeProj(19, 20)),
+                            RecType(21, TypeProj(7, 8))
+                          )
+                        )
+                      )
+                    ),
+                    FieldDecl(
+                      22,
+                      AndType(
+                        FunType(
+                          23,
+                          Bot,
+                          FieldDecl(24, RecType(25, TypeProj(7, 8)))
+                        ),
+                        TypeProj(19, 20)
+                      )
+                    )
+                  )
+                )
+              )
+            ),
+            TypeDecl(
+              26,
+              TypeProj(28, 29),
+              FunType(27, AndType(Top, Top), Bot)
+            )
+          )
+        )
+      ),
+      36 -> TypeDecl(37, TypeProj(38, 39), TypeProj(38, 39)),
+      30 -> TypeDecl(31, Bot, AndType(Bot, Bot)),
+      19 -> TypeDecl(20, Bot, TypeProj(9, 10)),
+      2 -> TypeProj(3, 4)
     ),
-    20
+    70
   ),
   1,
   0,
   AndType(
-    FieldDecl(7, Top),
-    AndType(
-      FieldDecl(8, Top),
-      FunType(
-        3,
-        Bot,
-        Top
+    FunType(
+      41,
+      FieldDecl(
+        42,
+        FunType(
+          43,
+          AndType(FieldDecl(44, Top), FieldDecl(45, TypeProj(3, 4))),
+          RecType(
+            46,
+            AndType(
+              AndType(FieldDecl(47, Bot), FieldDecl(48, Bot)),
+              AndType(
+                AndType(
+                  AndType(FieldDecl(49, Bot), FieldDecl(50, Top)),
+                  FieldDecl(
+                    51,
+                    AndType(
+                      RecType(52, AndType(Bot, TypeProj(36, 37))),
+                      Top
+                    )
+                  )
+                ),
+                FieldDecl(53, Bot)
+              )
+            )
+          )
+        )
+      ),
+      RecType(
+        54,
+        AndType(
+          FieldDecl(55, TypeProj(9, 10)),
+          FieldDecl(
+            56,
+            FunType(
+              57,
+              TypeProj(28, 29),
+              FunType(
+                58,
+                TypeDecl(59, Bot, Bot),
+                AndType(
+                  RecType(60, TypeProj(32, 33)),
+                  FieldDecl(61, RecType(62, Bot))
+                )
+              )
+            )
+          )
+        )
+      )
+    ),
+    RecType(
+      63,
+      RecType(
+        64,
+        FunType(
+          65,
+          RecType(
+            66,
+            AndType(
+              TypeDecl(67, Bot, TypeProj(30, 31)),
+              FieldDecl(68, Top)
+            )
+          ),
+          AndType(FunType(69, Bot, Bot), Top)
+        )
       )
     )
   ),
-  RecType(2,
-    AndType(
-      FieldDecl(7, Top),
-      FunType(
-        3,
-        Bot,
-        Top
-      )
-    )
-  )
+  //FunType(
+  //  41,
+  //  FieldDecl(
+  //    42,
+  //    FunType(
+  //      43,
+  //      AndType(FieldDecl(44, Top), FieldDecl(45, TypeProj(3, 4))),
+  //      RecType(
+  //        46,
+  //        AndType(
+  //          AndType(FieldDecl(47, Bot), FieldDecl(48, Bot)),
+  //          AndType(
+  //            AndType(
+  //              AndType(FieldDecl(49, Bot), FieldDecl(50, Top)),
+  //              FieldDecl(
+  //                51,
+  //                AndType(
+  //                  RecType(52, AndType(Bot, TypeProj(36, 37))),
+  //                  Top
+  //                )
+  //              )
+  //            ),
+  //            FieldDecl(53, Bot)
+  //          )
+  //        )
+  //      )
+  //    )
+  //  ),
+  //  RecType(
+  //    54,
+  //    AndType(
+  //      FieldDecl(55, TypeProj(9, 10)),
+  //      FieldDecl(
+  //        56,
+  //        FunType(
+  //          57,
+  //          TypeProj(28, 29),
+  //          FunType(
+  //            58,
+  //            TypeDecl(59, Bot, Bot),
+  //            AndType(
+  //              RecType(60, TypeProj(32, 33)),
+  //              FieldDecl(61, RecType(62, Bot))
+  //            )
+  //          )
+  //        )
+  //      )
+  //    )
+  //  )
+  //),
+  FunType(41, Que, Que)
 )
 
 val scope = globalScope + (z -> a)
@@ -6538,54 +6921,221 @@ val (GlobalContext(scope, nextSymbol), z, a, b): (GlobalContext, Symbol, Type, T
 //)
 //)
 
+//(
+//  GlobalContext(
+//    Map(
+//      25 -> TypeDecl(26, Bot, TypeProj(27, 28)),
+//      14 -> TypeDecl(15, TypeProj(17, 18), TypeDecl(16, Top, Top)),
+//      1 -> TypeDecl(
+//        2,
+//        AndType(
+//          TypeProj(3, 4),
+//          TypeDecl(
+//            21,
+//            AndType(Bot, TypeProj(3, 4)),
+//            TypeProj(22, 23)
+//          )
+//        ),
+//        TypeProj(3, 4)
+//      ),
+//      17 -> TypeDecl(18, TypeProj(19, 20), TypeProj(19, 20)),
+//      22 -> TypeDecl(23, Bot, Bot),
+//      27 -> TypeDecl(28, TypeProj(1, 2), TypeProj(1, 2)),
+//      3 -> TypeDecl(
+//        4,
+//        AndType(
+//          Bot,
+//          RecType(11, RecType(12, FieldDecl(13, TypeProj(14, 15))))
+//        ),
+//        FunType(
+//          5,
+//          FunType(
+//            6,
+//            FunType(7, Top, FieldDecl(8, Top)),
+//            FunType(9, RecType(10, Top), Bot)
+//          ),
+//          AndType(Bot, Top)
+//        )
+//      ),
+//      19 -> TypeDecl(20, Bot, Bot)
+//    ),
+//    29
+//  ),
+//  0,
+//  //TypeProj(25, 26),
+//  //AndType(
+//  //  TypeProj(3, 4),
+//  //  TypeDecl(21, AndType(Bot, TypeProj(3, 4)), TypeProj(22, 23))
+//  //)
+//  TypeProj(1, 2),
+//  TypeProj(3, 4)
+//)
+
+
 ( // TODO
   GlobalContext(
     Map(
-      25 -> TypeDecl(26, Bot, TypeProj(27, 28)),
-      14 -> TypeDecl(15, TypeProj(17, 18), TypeDecl(16, Top, Top)),
-      1 -> TypeDecl(
-        2,
-        AndType(
-          TypeProj(3, 4),
-          TypeDecl(
-            21,
-            AndType(Bot, TypeProj(3, 4)),
-            TypeProj(22, 23)
-          )
-        ),
-        TypeProj(3, 4)
+      28 -> TypeDecl(
+        29,
+        TypeProj(30, 31),
+        FunType(27, AndType(Top, Top), Bot)
       ),
-      17 -> TypeDecl(18, TypeProj(19, 20), TypeProj(19, 20)),
-      22 -> TypeDecl(23, Bot, Bot),
-      27 -> TypeDecl(28, TypeProj(1, 2), TypeProj(1, 2)),
+      38 -> TypeDecl(39, Bot, Bot),
+      9 -> TypeDecl(10, Bot, Bot),
+      32 -> TypeDecl(33, AndType(Bot, Top), TypeProj(34, 35)),
+      34 -> TypeDecl(35, TypeProj(36, 37), AndType(Bot, TypeProj(9, 10))),
+      7 -> TypeDecl(8, AndType(Bot, Bot), AndType(Top, TypeProj(9, 10))),
       3 -> TypeDecl(
         4,
+        AndType(TypeProj(32, 33), FieldDecl(40, Top)),
         AndType(
-          Bot,
-          RecType(11, RecType(12, FieldDecl(13, TypeProj(14, 15))))
-        ),
-        FunType(
-          5,
-          FunType(
-            6,
-            FunType(7, Top, FieldDecl(8, Top)),
-            FunType(9, RecType(10, Top), Bot)
+          AndType(
+            FieldDecl(5, Bot),
+            TypeDecl(6, Bot, TypeProj(7, 8))
           ),
-          AndType(Bot, Top)
+          AndType(
+            FieldDecl(
+              11,
+              RecType(
+                12,
+                RecType(
+                  13,
+                  AndType(
+                    FieldDecl(
+                      14,
+                      FieldDecl(
+                        15,
+                        TypeDecl(
+                          16,
+                          Bot,
+                          FunType(
+                            17,
+                            FieldDecl(18, TypeProj(19, 20)),
+                            RecType(21, TypeProj(7, 8))
+                          )
+                        )
+                      )
+                    ),
+                    FieldDecl(
+                      22,
+                      AndType(
+                        FunType(
+                          23,
+                          Bot,
+                          FieldDecl(24, RecType(25, TypeProj(7, 8)))
+                        ),
+                        TypeProj(19, 20)
+                      )
+                    )
+                  )
+                )
+              )
+            ),
+            TypeDecl(
+              26,
+              TypeProj(28, 29),
+              FunType(27, AndType(Top, Top), Bot)
+            )
+          )
         )
       ),
-      19 -> TypeDecl(20, Bot, Bot)
+      36 -> TypeDecl(37, TypeProj(38, 39), TypeProj(38, 39)),
+      30 -> TypeDecl(31, Bot, AndType(Bot, Bot)),
+      19 -> TypeDecl(20, Bot, TypeProj(9, 10)),
+      2 -> TypeProj(3, 4)
     ),
-    29
+    70
   ),
   0,
-  //TypeProj(25, 26),
-  //AndType(
-  //  TypeProj(3, 4),
-  //  TypeDecl(21, AndType(Bot, TypeProj(3, 4)), TypeProj(22, 23))
-  //)
-  TypeProj(1, 2),
-  TypeProj(3, 4)
+  FunType(
+    41,
+    AndType(
+      FieldDecl(
+        42,
+        FunType(
+          43,
+          AndType(FieldDecl(44, Top), FieldDecl(45, TypeProj(3, 4))),
+          RecType(
+            46,
+            AndType(
+              AndType(FieldDecl(47, Bot), FieldDecl(48, Bot)),
+              AndType(
+                AndType(
+                  AndType(FieldDecl(49, Bot), FieldDecl(50, Top)),
+                  FieldDecl(
+                    51,
+                    AndType(
+                      RecType(52, AndType(Bot, TypeProj(36, 37))),
+                      Top
+                    )
+                  )
+                ),
+                FieldDecl(53, Bot)
+              )
+            )
+          )
+        )
+      ),
+      RecType(
+        66,
+        AndType(
+          TypeDecl(67, Bot, TypeProj(30, 31)),
+          FieldDecl(68, Top)
+        )
+      )
+    ),
+    Top
+  ),
+  FunType(
+    41,
+    FieldDecl(
+      42,
+      FunType(
+        43,
+        AndType(FieldDecl(44, Top), FieldDecl(45, TypeProj(3, 4))),
+        RecType(
+          46,
+          AndType(
+            AndType(FieldDecl(47, Bot), FieldDecl(48, Bot)),
+            AndType(
+              AndType(
+                AndType(FieldDecl(49, Bot), FieldDecl(50, Top)),
+                FieldDecl(
+                  51,
+                  AndType(
+                    RecType(52, AndType(Bot, TypeProj(36, 37))),
+                    Top
+                  )
+                )
+              ),
+              FieldDecl(53, Bot)
+            )
+          )
+        )
+      )
+    ),
+    RecType(
+      54,
+      AndType(
+        FieldDecl(55, TypeProj(9, 10)),
+        FieldDecl(
+          56,
+          FunType(
+            57,
+            TypeProj(28, 29),
+            FunType(
+              58,
+              TypeDecl(59, Bot, Bot),
+              AndType(
+                RecType(60, TypeProj(32, 33)),
+                FieldDecl(61, RecType(62, Bot))
+              )
+            )
+          )
+        )
+      )
+    )
+  )
 )
 
 val varASubB = varIsSubtypeOf(scope + (z -> a), z, b)
@@ -6931,103 +7481,124 @@ val (GlobalContext(scope, nextSymbol), z, a, b): (GlobalContext, Symbol, Type, T
 //  TypeProj(1, 2)
 //)
 
+//(
+//  GlobalContext(
+//    Map(
+//      8 -> TypeDecl(9, Bot, Bot),
+//      18 -> TypeDecl(19, Bot, RecType(20, TypeProj(8, 9))),
+//      3 -> TypeDecl(
+//        4,
+//        RecType(
+//          5,
+//          AndType(
+//            TypeDecl(
+//              6,
+//              AndType(
+//                AndType(
+//                  TypeProj(8, 9),
+//                  RecType(
+//                    10,
+//                    AndType(
+//                      FieldDecl(11, Top),
+//                      TypeDecl(12, Bot, Bot)
+//                    )
+//                  )
+//                ),
+//                Bot
+//              ),
+//              FunType(7, Bot, Bot)
+//            ),
+//            AndType(
+//              AndType(
+//                AndType(
+//                  FieldDecl(13, RecType(14, Top)),
+//                  FieldDecl(15, Bot)
+//                ),
+//                AndType(
+//                  TypeDecl(16, Bot, Bot),
+//                  AndType(
+//                    FieldDecl(17, TypeProj(18, 19)),
+//                    FieldDecl(21, Bot)
+//                  )
+//                )
+//              ),
+//              FieldDecl(22, TypeProj(18, 19))
+//            )
+//          )
+//        ),
+//        RecType(
+//          5,
+//          AndType(
+//            TypeDecl(
+//              6,
+//              AndType(
+//                AndType(
+//                  TypeProj(8, 9),
+//                  RecType(
+//                    10,
+//                    AndType(
+//                      FieldDecl(11, Top),
+//                      TypeDecl(12, Bot, Bot)
+//                    )
+//                  )
+//                ),
+//                Bot
+//              ),
+//              FunType(7, Bot, Bot)
+//            ),
+//            AndType(
+//              AndType(
+//                AndType(
+//                  FieldDecl(13, RecType(14, Top)),
+//                  FieldDecl(15, Bot)
+//                ),
+//                AndType(
+//                  TypeDecl(16, Bot, Bot),
+//                  AndType(
+//                    FieldDecl(17, TypeProj(18, 19)),
+//                    FieldDecl(21, Bot)
+//                  )
+//                )
+//              ),
+//              FieldDecl(22, TypeProj(18, 19))
+//            )
+//          )
+//        )
+//      ),
+//      1 -> TypeDecl(
+//        2,
+//        AndType(TypeProj(3, 4), RecType(23, TypeProj(3, 4))),
+//        TypeProj(3, 4)
+//      )
+//    ),
+//    24
+//  ),
+//  0,
+//  TypeProj(1, 2),
+//  TypeProj(1, 2)
+//)
+
 (
   GlobalContext(
     Map(
-      8 -> TypeDecl(9, Bot, Bot),
-      18 -> TypeDecl(19, Bot, RecType(20, TypeProj(8, 9))),
-      3 -> TypeDecl(
-        4,
-        RecType(
-          5,
-          AndType(
-            TypeDecl(
-              6,
-              AndType(
-                AndType(
-                  TypeProj(8, 9),
-                  RecType(
-                    10,
-                    AndType(
-                      FieldDecl(11, Top),
-                      TypeDecl(12, Bot, Bot)
-                    )
-                  )
-                ),
-                Bot
-              ),
-              FunType(7, Bot, Bot)
-            ),
-            AndType(
-              AndType(
-                AndType(
-                  FieldDecl(13, RecType(14, Top)),
-                  FieldDecl(15, Bot)
-                ),
-                AndType(
-                  TypeDecl(16, Bot, Bot),
-                  AndType(
-                    FieldDecl(17, TypeProj(18, 19)),
-                    FieldDecl(21, Bot)
-                  )
-                )
-              ),
-              FieldDecl(22, TypeProj(18, 19))
-            )
-          )
-        ),
-        RecType(
-          5,
-          AndType(
-            TypeDecl(
-              6,
-              AndType(
-                AndType(
-                  TypeProj(8, 9),
-                  RecType(
-                    10,
-                    AndType(
-                      FieldDecl(11, Top),
-                      TypeDecl(12, Bot, Bot)
-                    )
-                  )
-                ),
-                Bot
-              ),
-              FunType(7, Bot, Bot)
-            ),
-            AndType(
-              AndType(
-                AndType(
-                  FieldDecl(13, RecType(14, Top)),
-                  FieldDecl(15, Bot)
-                ),
-                AndType(
-                  TypeDecl(16, Bot, Bot),
-                  AndType(
-                    FieldDecl(17, TypeProj(18, 19)),
-                    FieldDecl(21, Bot)
-                  )
-                )
-              ),
-              FieldDecl(22, TypeProj(18, 19))
-            )
-          )
-        )
-      ),
+      8 -> TypeDecl(9, Bot, AndType(Bot, Bot)),
+      6 -> TypeDecl(7, Bot, TypeProj(8, 9)),
       1 -> TypeDecl(
         2,
-        AndType(TypeProj(3, 4), RecType(23, TypeProj(3, 4))),
-        TypeProj(3, 4)
+        TypeProj(6, 7),
+        FunType(
+          3,
+          Top,
+          FunType(4, Top, AndType(FieldDecl(5, Top), Bot))
+        )
       )
     ),
-    24
+    12
   ),
   0,
   TypeProj(1, 2),
-  TypeProj(1, 2)
+  FunType(10, TypeDecl(11, Bot, TypeProj(8, 9)), TypeProj(1, 2))
 )
-
 
 def lub(left: Type, right: Type) = leastCommonSupertype(scope, left, right)
 def glb(left: Type, right: Type) = greatestCommonSubtype(scope, left, right)
@@ -7506,7 +8077,7 @@ val (GlobalContext(scope, nextSymbol), z, a, b, c): (GlobalContext, Symbol, Type
 //  TypeProj(1, 2)
 //)
 
-( // TODO
+(
   GlobalContext(
     Map(
       25 -> TypeDecl(26, Bot, TypeProj(27, 28)),
@@ -7788,6 +8359,64 @@ val (GlobalContext(scope, nextSymbol), localScope, killSet, z, a): (GlobalContex
 //  Top, // TODO odd. Top is not a subtype of TypeProj(1, 2)...
 //  TypeProj(1, 2)
 //)
+
+//( // TODO
+//  GlobalContext(Map(3 -> TypeDecl(4, Bot, Top)), 7),
+//  Map(
+//    1 -> AndType(
+//      TypeDecl(2, TypeProj(3, 4), TypeProj(3, 4)),
+//      RecType(5, Bot)
+//    )
+//  ),
+//  0,
+//  AndType(AndType(Top, TypeProj(3, 4)), RecType(6, Top)),
+//  TypeProj(1, 2)
+//)
+
+( // TODO
+  GlobalContext(
+    Map(
+      7 -> TypeDecl(8, Bot, AndType(Top, Bot)),
+      11 -> TypeDecl(12, Top, Top),
+    1 -> AndType(
+      TypeDecl(
+        2,
+        Bot,
+        FunType(
+          3,
+          TypeDecl(4, FieldDecl(5, Bot), FieldDecl(5, Top)),
+          Top
+        )
+      ),
+      RecType(6, TypeProj(7, 8))
+    ),
+    9 -> TypeProj(1, 2),
+    10 -> Top
+    ),
+    18
+  ),
+  0,
+  AndType(
+    AndType(
+      TypeProj(11, 12),
+      FunType(
+        13,
+        FieldDecl(14, FunType(15, Top, RecType(16, Top))),
+        FieldDecl(17, TypeProj(11, 12))
+      )
+    ),
+    TypeProj(11, 12)
+  ),
+  TypeProj(1, 2)
+)
+
+( // TODO
+  GlobalContext(Map(3 -> TypeDecl(4, Bot, Bot)), 7),
+  Map(1 -> AndType(TypeDecl(2, Bot, Top), TypeProj(3, 4))),
+  0,
+  AndType(Top, RecType(5, FieldDecl(6, Bot))),
+  AndType(TypeProj(1, 2), RecType(5, FieldDecl(6, Bot)))
+)
 
   val res = eliminateVars(scope, killSet, Some(z), a, variance=Contravariant)
   P.namedln("res", res)
@@ -12676,6 +13305,110 @@ P.namedln("resTerm", resTerm)
 P.namedln("scope", scope)
 P.namedln("eqcheck", eqcheck(scope, resTerm, expected))
 P.namedln("res == expected", equalTerms(scope, resTerm, expected))
+
+}
+
+def debugpartc(): Unit = {
+
+val p: InferenceProblem =
+
+
+//InferenceProblem(
+//  GlobalContext(Map(0 -> Top), 1),
+//  Var(0),
+//  Que,
+//  TypedVar(0) :- Top
+//)
+
+//InferenceProblem(
+//  GlobalContext(
+//    Map(
+//      10 -> TypeProj(2, 3),
+//      6 -> TypeDecl(7, TypeProj(8, 9), Top),
+//      2 -> TypeDecl(3, TypeProj(4, 5), Top),
+//      8 -> TypeDecl(9, Top, Top),
+//      4 -> TypeDecl(5, Top, TypeProj(6, 7))
+//    ),
+//    11
+//  ),
+//  Var(10),
+//  Que,
+//  TypedVar(10) :- TypeProj(2, 3)
+//)
+
+
+//InferenceProblem(
+//  GlobalContext(Map(7 -> FunType(9, Top, Top), 8 -> Top), 10),
+//  App(7, 8),
+//  Que,
+//  TypedApp(7, 8) :- Top
+//)
+
+//InferenceProblem(
+//  GlobalContext(
+//    Map(
+//      38 -> Bot,
+//      39 -> FunType(24, TypeProj(8, 10), FieldDecl(27, Top)),
+//      8 -> TypeDecl(10, Top, Top)
+//    ),
+//    40
+//  ),
+//  Let(18, Var(38), Var(39)),
+//  Que,
+//  TypedLet(
+//    18,
+//    TypedVar(38) :- Bot,
+//    TypedVar(39) :- FunType(24, TypeProj(8, 10), FieldDecl(27, Top))
+//  ) :- FunType(24, TypeProj(8, 10), FieldDecl(27, Top))
+//)
+
+InferenceProblem(
+  GlobalContext(
+    Map(
+      18 -> FunType(
+        5,
+        Top,
+        FunType(7, Bot, FunType(9, Top, TypeProj(11, 12)))
+      ),
+      11 -> TypeDecl(12, Bot, Bot),
+      13 -> Top
+    ),
+    19
+  ),
+  Let(3, Var(18), Var(13)),
+  Que,
+  TypedLet(
+    3,
+    TypedVar(18) :- FunType(
+      5,
+      Top,
+      FunType(7, Bot, FunType(9, Top, TypeProj(11, 12)))
+    ),
+    TypedVar(13) :- Top
+  ) :- Top
+)
+
+
+
+//P.namedln("problem", p)
+
+val InferenceProblem(GlobalContext(scope, nextSymbol), term, prototype, expected) = p
+
+val su = new SymbolUniverse(nextSymbol)
+
+//P.namedln("scope", scope)
+//P.namedln("term", term)
+//P.namedln("expected", expected)
+
+val resTerm = typecheckInParallel(su, term, prototype, scope)
+
+P.namedln("resTerm", resTerm)
+
+if (resTerm != None) {
+  P.namedln("scope", scope)
+  P.namedln("eqcheck", eqcheck(scope, resTerm.get, expected))
+  P.namedln("res == expected", equalTerms(scope, resTerm.get, expected))
+}
 
 }
 

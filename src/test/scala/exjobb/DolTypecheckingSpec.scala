@@ -73,30 +73,6 @@ object DolTypecheckingSpec extends Properties("DolTypecheckingSpec") { // TODO R
 
   // TODO if x does not typecheck, then f(x) should not typecheck either.
 
-//  property("positiveSequentialInferenceProblem") = {
-//    val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
-//      ctx1  <- genGlobalScope()
-//      (ctx2, problem) <- genInferenceProblem(ctx1, Map())
-//    } yield (ctx2, problem)
-//    def shrink(tuple: (GlobalContext, InferenceProblem.Term)): Stream[(GlobalContext, InferenceProblem.Term)] = {
-//      val (ctx, problem) = tuple
-//      shrinkInferenceProblem(ctx, problem, isRoot=true)
-//    }
-//    Prop.forAllShrink(generator, shrink){ case (ctx, problem) =>
-//      val p = InferenceProblem.assemble(ctx, problem)
-//      prettyNamed("input", p) |: Prop.protect{
-//        val res = NoFuture.typecheckTerm(p.su(), p.term, p.prototype, p.scope)
-//
-//        (prettyNamed("res", res) |:
-//          prettyNamed("eqcheck", eqcheck(p.scope, res, p.expected)) |:
-//          Prop.protect(
-//            NoFuture.equalTerms(p.scope, res, p.expected)
-//          )
-//        )
-//      }
-//    }
-//  }
-
   property("positiveSequentialInferenceProblem2") = {
     val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
       ctx1  <- genGlobalScope()
@@ -137,6 +113,30 @@ object DolTypecheckingSpec extends Properties("DolTypecheckingSpec") { // TODO R
               NoFuture.equalTerms(p.scope, res, p.expected)
             )
           )
+        }
+      }
+    }
+  }
+
+  property("positiveParallelInferenceProblem") = {
+    val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
+      ctx1  <- genGlobalScope()
+      (ctx2, problem) <- genInferenceProblemFromPrototype(ctx1, Map(), Que)
+    } yield (ctx2, problem)
+    def shrink(tuple: (GlobalContext, InferenceProblem.Term)): Stream[(GlobalContext, InferenceProblem.Term)] = {
+      val (ctx, problem) = tuple
+      shrinkInferenceProblem(ctx, problem, isRoot=true)
+    }
+    Prop.forAllShrink(generator, shrink){ case (ctx, problem) =>
+      val p = InferenceProblem.assemble(ctx, problem)
+      prettyNamed("input", p) |: Prop.protect{
+        val resOpt = typecheckInParallel(p.su(), p.term, p.prototype, p.scope)
+        resOpt match {
+          case None => prettyNamed("res", None) |: Prop.all(false)
+          case Some(res) =>
+            (prettyNamed("res", res)
+              |: prettyNamed("eqcheck", eqcheck(p.scope, res, p.expected))
+              |: Prop.all(NoFuture.equalTerms(p.scope, res, p.expected)))
         }
       }
     }

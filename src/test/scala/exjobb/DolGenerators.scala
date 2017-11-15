@@ -1045,18 +1045,20 @@ object DolGenerators {
       appResType <- const(NoFuture.typeRenameVar(x, y, xResType))
     } yield (ctx7, IApp(f, y) :% prototype :? appResType)
 
-    val genTApp = for {
-      (ctx2, x) <- ctx.newSymbol()
-      (ctx3, argType) <- genRecType(ctx2, localScope) // TODO since we have a variable for unwrapping argDefs, this does not have to be recursive.
-      (ctx4, funTerm) <- genInferenceProblemFromPrototype(ctx3, localScope, FunType(x, argType, prototype)) // TODO wrong. must be Que.
-      (FunType(w, wType, wResType)) <- const(funTerm.typ)
-      argPrototype <- const(NoFuture.objStdDecl(ctx4.globalScope ++ localScope, x, wType).toType)
-      argPrototype2 <- const(NoFuture.eliminateVars(ctx4.globalScope ++ localScope + (x -> argPrototype), Set(x), Some(x), argPrototype, Contravariant))
-      (ctx5, argDefs) <- genDefFromPrototype(ctx4, localScope, argPrototype2) // TODO leave out some typeargs to be inferred
-      appResType <- const(NoFuture.eliminateVars(ctx5.globalScope ++ localScope + (x -> argDefs.typ), Set(x), None, NoFuture.typeRenameVar(w, x, wResType)))
-    } yield (ctx5, ITApp(funTerm, argDefs) :% prototype :? appResType)
+    //val genTApp = for {
+    //  (ctx2, x) <- ctx.newSymbol()
+    //  (ctx3, argType) <- genRecType(ctx2, localScope) // TODO since we have a variable for unwrapping argDefs, this does not have to be recursive.
+    //  (ctx4, funTerm) <- genInferenceProblemFromPrototype(ctx3, localScope, FunType(x, argType, prototype)) // TODO wrong. must be Que.
+    //  (FunType(w, wType, wResType)) <- const(funTerm.typ)
+    //  argPrototype <- const(NoFuture.objStdDecl(ctx4.globalScope ++ localScope, x, wType).toType)
+    //  argPrototype2 <- const(NoFuture.eliminateVars(ctx4.globalScope ++ localScope + (x -> argPrototype), Set(x), Some(x), argPrototype, Contravariant))
+    //  (ctx5, argDefs) <- genDefFromPrototype(ctx4, localScope, argPrototype2) // TODO leave out some typeargs to be inferred
+    //  appResType <- const(NoFuture.eliminateVars(ctx5.globalScope ++ localScope + (x -> argDefs.typ), Set(x), None, NoFuture.typeRenameVar(w, x, wResType)))
+    //} yield (ctx5, ITApp(funTerm, argDefs) :% prototype :? appResType)
 
-    oneOf(genFromRes, genTApp)
+    //oneOf(genFromRes, genTApp)
+
+    genFromRes
   }
 
   def genObjInferenceProblemFromPrototype(ctx: GlobalContext, localScope: Scope, prototype: Prototype): Gen[(GlobalContext, InferenceProblem.Term)] = prototype match {

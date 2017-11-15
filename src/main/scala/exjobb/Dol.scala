@@ -500,8 +500,13 @@ object Dol {
             inner(scope, lhs, bUpperType, visitedLeft, visitedRight + ((lhs, bProj)))
 
           case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x != y =>
-            if (doesShadow(scope + (x -> yType), yResType)) return Top // TODO hack.
-            inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight)
+            if (doesShadow(scope + (x -> xType), yResType)) return Top // TODO hack.
+            if (doesShadow(scope + (y -> xType), xResType)) return Top // TODO hack.
+
+            andType( // TODO hack.
+              inner(scope, lhs, typeRenameBoundVarAssumingNonFree(x, rhs), visitedLeft, visitedRight),
+              inner(scope, typeRenameBoundVarAssumingNonFree(y, lhs), rhs, visitedLeft, visitedRight))
+
           case (FunType(x, xType, xResType), FunType(y, yType, yResType)) if x == y =>
             if (scope.contains(x)) ???
             val argType = andType(xType, yType)
@@ -579,8 +584,10 @@ object Dol {
               else if (rightSubLeft)
                 right
               else {
-                //Solution(greatestCommonSubtype(scope, leftType, rightType)) // TODO wrong.
-                Inconsistent
+                Solution(leastCommonSupertype(scope, leftType, rightType)) // TODO wrong?
+                //pprint.pprintln((leftType, rightType), width=78, height=40000000)
+                //pprint.pprintln((leftSubRight, rightSubLeft))
+                //Inconsistent
               }
             case Contravariant =>
               if (leftSubRight)
@@ -588,8 +595,8 @@ object Dol {
               else if (rightSubLeft)
                 left
               else {
-                //Solution(leastCommonSupertype(scope, leftType, rightType)) // TODO wrong.
-                Inconsistent
+                Solution(greatestCommonSubtype(scope, leftType, rightType)) // TODO wrong?
+                //Inconsistent
               }
             //case Invariant =>
             //  if (leftSubRight && rightSubLeft)
@@ -601,6 +608,50 @@ object Dol {
         case (Solution(leftType), _)  => Solution(leftType)
         case (_, Solution(rightType)) => Solution(rightType)
         case (NoSolution, NoSolution) => NoSolution
+    }
+
+    def orSolveResult2(scope: Scope, r: Symbol, zOption: Option[Symbol], variance: Variance, pattern: Type, left: SolveResult2, right: SolveResult2): SolveResult2 = (left, right) match {
+        case (Inconsistent2, _) | (_, Inconsistent2) => Inconsistent2
+        case (Solution2(m1), Solution2(m2)) =>
+
+          val leftType = applyConstraintSolution(pattern, m1)
+          val rightType = applyConstraintSolution(pattern, m2)
+          val leftSubRight = (None != raise(scope, r, zOption, leftType, rightType))
+          val rightSubLeft = (None != raise(scope, r, zOption, rightType, leftType))
+
+          //pprint.pprintln((leftType, rightType), width=78, height=40000000)
+          //pprint.pprintln((leftSubRight, rightSubLeft))
+
+          variance match {
+            case Covariant =>
+              if (leftSubRight)
+                left
+              else if (rightSubLeft)
+                right
+              else {
+                //Solution(leastCommonSupertype(scope, leftType, rightType)) // TODO wrong?
+                //pprint.pprintln((leftType, rightType), width=78, height=40000000)
+                //pprint.pprintln((leftSubRight, rightSubLeft))
+                Inconsistent2
+              }
+            case Contravariant =>
+              if (leftSubRight)
+                right
+              else if (rightSubLeft)
+                left
+              else {
+                Inconsistent2
+              }
+            //case Invariant =>
+            //  if (leftSubRight && rightSubLeft)
+            //    left
+            //  else
+            //    Inconsistent
+            case _ => ???
+          }
+        case (Solution2(m1), NoSolution2) => Solution2(m1)
+        case (NoSolution2, Solution2(m2)) => Solution2(m2)
+        case (NoSolution2, NoSolution2)   => NoSolution2
     }
 
     // TODO constraints and variance should be calculated separately...
@@ -648,6 +699,58 @@ object Dol {
         case NoSolution    => None
       }
     }
+
+    sealed trait SolveResult2
+    case class  Solution2(m: Map[TypeProj, Type]) extends SolveResult2
+    case object Inconsistent2 extends SolveResult2
+    case object NoSolution2 extends SolveResult2
+
+    def solveConstraint2(topScope: Scope, zOption: Option[Symbol], solveSet: Set[TypeProj], solveSetVariance: Map[TypeProj, Variance], constraint: Constraint, pattern: Type, topVariance: Variance): Option[Map[TypeProj, Type]] = {
+      val defaults: ConstraintMap = solveSet.map(p => (p -> (Map(): Scope, Bot, Top))).toMap
+
+      dnfStream(constraint).map{defaults ++ _}.map{res =>
+        if (res.keys != defaults.keys) ???
+
+        val badBounds = res.map{case (p, (scope, lower, upper)) =>
+          val wOption = if (andTypeSeq(pattern).exists{_ == p}) zOption else None // TODO hack.
+          // TODO allow zOption p is toplevel?
+          //pprint.pprintln((p, scope, lower, upper))
+          val lowerSubUpper = (None != raise(scope, -1, wOption, lower, upper))
+          val upperSubLower = (None != raise(scope, -1, wOption, upper, lower))
+          p -> (
+            !lowerSubUpper
+            || (solveSetVariance(p) == Invariant
+              && !upperSubLower))
+        }
+
+        if (badBounds.exists{_._2}) {
+          NoSolution2
+        } else {
+          val mapping = res.map{case (proj, (scope, lower, upper)) =>
+            val typ = solveSetVariance(proj) match {
+              case Covariant        => lower
+              case Contravariant    => upper
+              case ConstantVariance => lower
+              case Invariant        => lower
+            }
+            proj -> typ
+          }
+          Solution2(mapping)
+        }
+      }.fold[SolveResult2](NoSolution2){
+          orSolveResult2(topScope, -1, zOption, topVariance, pattern, _, _)
+          // TODO *WHY* did it work when minimizing contravariant? Will all
+          // OR-alternatives always give the same result when matching or are
+          // our tests insufficient???
+      } match {
+        case Solution2(res) => Some(res)
+        case Inconsistent2  => None
+        case NoSolution2    => None
+      }
+    }
+
+
+
 
     def dnfStream(constraint: Constraint): Stream[ConstraintMap] = constraint match {
       case AndConstraint(left, right) =>
@@ -888,6 +991,12 @@ object Dol {
       case AndDef(left, right) => dom(left) ++ dom(right)
     }
 
+    def dom(d: Typed.Def): Set[Symbol] = d match {
+      case (TypedFieldDef(a, _) :- _)      => Set(a)
+      case (TypedTypeDef(a, _)  :- _)      => Set(a)
+      case (TypedAndDef(left, right) :- _) => dom(left) ++ dom(right)
+    }
+
     def domTypes(d: Def): Set[Symbol] = d match {
       case FieldDef(_, _)      => Set()
       case TypeDef(a, _)       => Set(a)
@@ -993,6 +1102,7 @@ object Dol {
       case (App(x, y), p) =>
         TypedApp(x, y) :- {
           val z = su.newSymbol()
+          // TODO allow arg to constrain the function? i.e. overloading.
           typecheckTerm(su, Var(x), FunType(z, Que, Que), scope).typ match {
             case FunType(w, wType, wResType) =>
               val yType = typecheckTerm(su, Var(y), wType, scope).typ
@@ -1022,7 +1132,7 @@ object Dol {
           case None =>
             throw new TypecheckingError(s"fail lower($x, $xType, $argPrototype)")
           case Some(loweredXType) =>
-            val localScope = scope + (x -> xType) // TODO xType vs loweredXType? what happens if loweredXType is Bot? special case that?
+            val localScope = scope + (x -> xType)
             val typedResTerm = typecheckTerm(su, resTerm, resPrototype, localScope)
             TypedFun(x, xType, typedResTerm) :- simplify(FunType(x, loweredXType, typedResTerm.typ))
         }
@@ -2265,6 +2375,11 @@ object Dol {
     // TODO approximations
   }
 
+  case class TypeSymbol(a: Symbol) extends Type {
+    val treeHeight = 1
+    val totNumNodes = 1
+    // TODO approximations
+  }
 
   // TODO typed terms. {var mytpe} like in Dotty? vs cell?
 
@@ -2343,6 +2458,14 @@ object Dol {
     }
   }
 
+  def onNext[T](cell: DefaultCell[T])(f: T => Unit): Unit = {
+    cell.onNext{
+      case Success(x) => f(x)
+      case _ => ??? // TODO
+    }
+  }
+
+
   def expandTypeFutures(t: Type)(cont: (Type) => Unit): Unit = t match {
     case FutureType(cell) =>
       onComplete(cell) {actualType =>
@@ -2376,30 +2499,6 @@ object Dol {
           cont(AndType(newLeftType, newRightType))
         }
       }
-    //case PolyFunType(typeParams, params, resType) =>
-    //  def k2(innerList: List[(Symbol, Type)])(cont: (List[(Symbol, Type)]) => Unit): Unit = innerList match {
-    //    case (x, xType) :: rest =>
-    //      expandTypeFutures(xType) {newXType =>
-    //        k2(rest) {rest =>
-    //          cont((x, newXType) :: rest)
-    //        }
-    //      }
-    //    case Nil => cont(Nil)
-    //  }
-    //  def k(params: List[List[(Symbol, Type)]])(cont: (List[List[(Symbol, Type)]]) => Unit): Unit = params match {
-    //    case innerList :: rest =>
-    //      k2(innerList) {innerList =>
-    //        k(rest) {rest =>
-    //          cont(innerList :: rest)
-    //        }
-    //      }
-    //    case Nil => cont(Nil)
-    //  }
-    //  k(params) {params =>
-    //    expandTypeFutures(resType) {newResType =>
-    //      cont(PolyFunType(typeParams, params, newResType))
-    //    }
-    //  }
     case _ => cont(t)
   }
 
@@ -2503,25 +2602,154 @@ object Dol {
     def empty = true
   }
 
-  case class Parallel(val symbolUniverse: SymbolUniverse, val pool: HandlerPool, val hasErrorsAtom:  AtomicBoolean) {
-//    // TODO smarter futureType that does not always fork? e.g. r(..., asFutureTypePlease=true) and chooses to make a future or not
-//
-//    def launch(f: => Unit) {
-//      pool.execute{() => f}
-//    }
-//
-//    def contCell[T](lattice: Lattice[T])(f: (T => Unit) => Unit): DefaultCell[T] = {
-//      val completer = newCellCompleter(pool, lattice)
-//      launch {
-//        f {res =>
-//            completer.putFinal(res)
-//        }
-//        // TODO catch and rethrow exceptions? should probably not call error()
-//        // since we are not expecting errors. --- WHAT?
-//      }
-//      completer.cell
-//    }
-//
+  sealed trait TypeMap
+  case object FailureTypeMap extends TypeMap
+  case class PartialTypeMap(m: Map[Symbol, Type]) extends TypeMap
+
+  object TypeMapLattice extends Lattice[TypeMap] {
+    def join(current: TypeMap, next: TypeMap): TypeMap = (current, next) match {
+      case (FailureTypeMap, _) => FailureTypeMap
+      case (_, FailureTypeMap) => FailureTypeMap
+      case (PartialTypeMap(m1), PartialTypeMap(m2)) =>
+        // NOTE: In most cases `m2.size == 1` so this is fast.
+        if (m1.keySet.intersect(m2.keySet) != Set.empty)
+          FailureTypeMap
+        else
+          PartialTypeMap(m1 ++ m2)
+    }
+    def empty: TypeMap = PartialTypeMap(Map.empty)
+  }
+
+  class DumbMapLattice[K, V] extends Lattice[Map[K, V]] {
+    def join(current: Map[K, V], next: Map[K, V]): Map[K, V] = current ++ next
+    def empty: Map[K, V] = Map.empty
+  }
+
+  object DumbTypeMapLattice extends DumbMapLattice[Symbol, DefaultCellCompleter[Type]]
+
+
+  case class Parallel(val su: SymbolUniverse, parallelism: Int = 1) {
+
+    val hasErrorsAtom:  AtomicBoolean = new AtomicBoolean(false)
+
+    val pool = new HandlerPool(parallelism, {(e: Throwable) =>
+      e.printStackTrace() // TODO vs store exception
+      hasErrorsAtom.lazySet(true)
+    })
+
+    // TODO smarter futureType that does not always fork? e.g. r(..., asFutureTypePlease=true) and chooses to make a future or not
+
+    //val failureTypeMap = Map(su.newSymbol() -> Top)
+
+    /* Eventually maps each TypeSymbol to a Type (which may contain other
+     * TypeSymbols).
+     */
+    //val typeMapCellCompleter: DefaultCellCompleter[TypeMap] = newCellCompleter(pool, TypeMapLattice)
+
+    // TODO maybe pu everything in a single big lattice like:
+    // Map[TypeSymbol, Thing]
+    // Done <: Thing
+    // Unknown <: Thing
+    // Dep(dependencies: Set[TypeSymbol], action: => Unit) <: Thing
+    // Waiting <: Thing
+    //
+
+    val typeSymbolCellCompleters: DefaultCellCompleter[Map[Symbol, DefaultCellCompleter[Type]]] = newCellCompleter(pool, DumbTypeMapLattice)
+
+    def newTypeSymbol(): Symbol = {
+      val ts = su.newSymbol()
+      val completer = newCellCompleter(pool, Lattice.trivial[Type])
+      typeSymbolCellCompleters.putNext(Map(ts -> completer))
+      ts
+    }
+
+    def onTypeSymbolSet(ts: Symbol)(f: Type => Unit): Unit = {
+      onComplete(typeSymbolCellCompleters.cell.getResult()(ts).cell)(f)
+    }
+
+    def expandRoot(typ: Type, except: Set[Symbol] = Set())(cont: Type => Unit): Unit = typ match {
+      case TypeSymbol(ts) if !except.contains(ts) =>
+        onTypeSymbolSet(ts){typ =>
+          expandRoot(typ, except)(cont)
+        }
+      case _ => cont(typ)
+    }
+
+    def expand(typ: Type, except: Set[Symbol] = Set())(cont: Type => Unit): Unit = typ match {
+      case TypeSymbol(ts) if !except.contains(ts) =>
+        onTypeSymbolSet(ts){typ =>
+          expand(typ, except)(cont)
+        }
+      case FunType(x, xType, xResType) =>
+        expand(xType, except){xType =>
+          expand(xResType, except){xResType =>
+            cont(FunType(x, xType, xResType))
+          }
+        }
+      case RecType(x, xType) =>
+        expand(xType, except){xType =>
+          cont(RecType(x, xType))
+        }
+      case AndType(left, right) =>
+        expand(left, except){left =>
+          expand(right, except){right =>
+            cont(AndType(left, right))
+          }
+        }
+      case FieldDecl(a, aType) =>
+        expand(aType, except){aType =>
+          cont(FieldDecl(a, aType))
+        }
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        expand(aLowerType, except){aLowerType =>
+          expand(aUpperType, except){aUpperType =>
+            cont(TypeDecl(a, aLowerType, aUpperType))
+          }
+        }
+      case _ => cont(typ)
+    }
+
+    def expandScope(scope: Scope, directlyUsedVars: Set[Symbol], exceptTypeSymbols: Set[Symbol] = Set(), alreadyExpanded: Scope = Map())(cont: Scope => Unit): Unit = {
+      // TODO use DumbMapLattice to gather final scope?
+      def expandList(list: List[(Symbol, Type)])(cont: List[(Symbol, Type)] => Unit): Unit = list match {
+        case (ts, typ) :: rest =>
+          expand(typ, exceptTypeSymbols){typ =>
+            expandList(rest){rest =>
+              cont((ts, typ) :: rest)
+            }
+          }
+        case Nil => cont(Nil)
+      }
+      val varsToExpand = directlyUsedVars -- alreadyExpanded.keys
+      if (varsToExpand.isEmpty)
+        cont(alreadyExpanded)
+      else
+        expandList(varsToExpand.toList.map{x => (x, scope(x))}) { l1 =>
+          val l2 = alreadyExpanded.toList
+          val moreVars = (l1 ++ l2).flatMap{case (x, typ) =>
+            NoFuture.allFreeVarsInType(typ)
+          }.toSet
+          val scope2 = (l1 ++ l2).toMap
+          expandScope(scope, (moreVars -- directlyUsedVars) -- scope2.keySet, exceptTypeSymbols, scope2)(cont)
+        }
+    }
+
+    def setTypeSymbol(ts: Symbol, typ: Type): Unit =
+      typeSymbolCellCompleters.cell.getResult()(ts).putFinal(typ)
+
+    def launch(f: => Unit): Unit = pool.execute{() => f}
+
+    def contCell[T](lattice: Lattice[T])(f: (T => Unit) => Unit): DefaultCell[T] = {
+      val completer = newCellCompleter(pool, lattice)
+      //pprint.pprintln(completer.cell)
+      launch {
+        f {res =>
+            completer.putFinal(res)
+        }
+      }
+      completer.cell
+    }
+
 //    def contZipFork[A >: Null, B >: Null](a: (A => Unit) => Unit, b: (B => Unit) => Unit)(cont: (A, B) => Unit): Unit = { // TODO test
 //      val aCell = contCell(Lattice.trivial[A])(a)
 //      val bCell = contCell(Lattice.trivial[B])(b)
@@ -2531,12 +2759,12 @@ object Dol {
 //        }
 //      }
 //    }
-//
+
 //    def futureType(f: ((Type) => Unit) => Unit): Type = {
 //      FutureType(contCell(Lattice.trivial[Type])(f))
 //    }
-//
-//
+
+
 //    def expandTermFutures(term: Term)(cont: (Term) => Unit): Unit = term match {
 //      case TermFuture(cell) =>
 //        onComplete(cell){
@@ -2722,10 +2950,9 @@ object Dol {
 //
 //    // TODO replace killScope:Scope with killSet:Set[Symbol]?
 //
-//    def contFuture[T >: Null](f: ((T) => Unit) => Unit): DefaultCell[T] = {
-//      val lattice = Lattice.trivial[T]
-//      contCell(lattice)(f)
-//    }
+    def contFuture[T >: Null](f: ((T) => Unit) => Unit): DefaultCell[T] = {
+      contCell(Lattice.trivial[T])(f)
+    }
 //
 //    private case class TermFuture(cell: DefaultCell[Term]) extends Term { // NOTE: Nested, so that Parallel.pool is in scope. Don't mix with other Parallel instances! // TODO pool as argument instead?
 //      val treeHeight = 1
@@ -2780,11 +3007,11 @@ object Dol {
 ////    }
 //
 //
-//    def error(): Type = {
-//      hasErrorsAtom.lazySet(true)
-//      ???
-//      ErrorType
-//    }
+    def error(): Type = {
+      hasErrorsAtom.lazySet(true)
+      ???
+      ErrorType
+    }
 //
 //
 //
@@ -2796,76 +3023,410 @@ object Dol {
 //    //   f({A = Int}): Int  // i.e. not x.A
 //    // TODO circular dependencies between fields should always result in ErrorType?
 //
-//    def typecheckTerm(e: Term, p: Prototype = Que, scope: Scope = Map()): TypedTerm = ??? // TODO term-continuations?
-//
-//    def run[T >: Null](f: ((T) => Unit) => Unit): Option[T] = {
-//      val rootPromise = Promise[Option[T]]()
-//      launch {
-//        val rootCell = contFuture[T](f)
-//        onComplete(rootCell){rootType =>
-//          val res = if (hasErrorsAtom.get()) None else Some(rootType)
-//          rootPromise.success(res)
-//        }
-//      }
-//      try {
-//        val incompleteCellsAtTheEnd = Await.result(pool.quiescentIncompleteCells, 10.seconds) // TODO
-//        if (incompleteCellsAtTheEnd.size != 0) {
-//          if (hasErrorsAtom.get())
-//            throw new NotImplementedError("quiescent with incomplete cells AND errors")
-//          else
-//            throw new TimeoutException("quiescent with incomplete cells")
-//          None
-//        }
-//        await(rootPromise.future)
-//      } catch {
-//        case e: TimeoutException => e.printStackTrace(); None
-//        case e: NotImplementedError => e.printStackTrace(); None
-//      }
-//    }
-//
-//
-//
-//    def isPrototype(t: Type)(cont: (Boolean) => Unit): Unit = {
-//      def zipIsPrototype(a: Type, b: Type): Unit = {
-//        // TODO parallel?
-//        isPrototype(a){yesA =>
-//          isPrototype(b){yesB =>
-//            cont(yesA || yesB)
-//          }
-//        }
-//      }
-//      t match {
-//        case Que =>
-//          cont(true)
-//        case FunType(_, argType, resType) =>
-//          zipIsPrototype(argType, resType)
-//        case RecType(x, xType) =>
-//          isPrototype(xType)(cont)
-//        case FieldDecl(a, aType) =>
-//          isPrototype(aType)(cont)
-//        case TypeDecl(a, aLowerType, aUpperType) =>
-//          zipIsPrototype(aLowerType, aUpperType)
-//        case AndType(left, right) =>
-//          zipIsPrototype(left, right)
-//        case FutureType(cell) =>
-//          onComplete(cell){actualType =>
-//            isPrototype(actualType)(cont)
-//          }
-//        case _ => cont(false)
-//      }
-//    }
+
+    def annotateDef(d: Def): Typed.Def = {
+      val typ = TypeSymbol(newTypeSymbol())
+      d match {
+        case FieldDef(a, aTerm)  => TypedFieldDef(a, annotateTerm(aTerm))              :- typ
+        case TypeDef(a, aType)   => TypedTypeDef(a, aType)                             :- typ
+        case AndDef(left, right) => TypedAndDef(annotateDef(left), annotateDef(right)) :- typ
+      }
+    }
+
+    def annotateTerm(term: Term): Typed.Term = {
+      val typ = TypeSymbol(newTypeSymbol())
+      term match {
+        case Var(x)                 => TypedVar(x)                                             :- typ
+        case App(x, y)              => TypedApp(x, y)                                          :- typ
+        case Let(x, xTerm, resTerm) => TypedLet(x, annotateTerm(xTerm), annotateTerm(resTerm)) :- typ
+        case Sel(x, a)              => TypedSel(x, a)                                          :- typ
+        case Obj(x, xType, body)    => TypedObj(x, xType, annotateDef(body))                   :- typ
+        case Fun(x, xType, body)    => TypedFun(x, xType, annotateTerm(body))                  :- typ
+        case TApp(funTerm, argDef)  => TypedTApp(annotateTerm(funTerm), annotateDef(argDef))   :- typ
+      }
+    }
+
+    def expandDef(d: Typed.Def)(cont: Typed.Def => Unit): Unit = {
+      expand(d.typ){typ =>
+        d.d match {
+          case TypedFieldDef(a, aTerm)  =>
+            expandTerm(aTerm) { aTerm =>
+              cont(TypedFieldDef(a, aTerm) :- typ)
+            }
+          case TypedTypeDef(a, aType)   =>
+            cont(TypedTypeDef(a, aType) :- typ)
+          case TypedAndDef(left, right) =>
+            expandDef(left) { left =>
+              expandDef(right) { right =>
+                cont(TypedAndDef(left, right) :- typ)
+              }
+            }
+        }
+      }
+    }
+
+    def expandTerm(term: Typed.Term)(cont: Typed.Term => Unit): Unit = {
+      expand(term.typ){typ =>
+        term.term match {
+          case TypedVar(x) =>
+            cont(TypedVar(x) :- typ)
+          case TypedApp(x, y) =>
+            cont(TypedApp(x, y) :- typ)
+          case TypedLet(x, xTerm, resTerm) =>
+            expandTerm(xTerm) {xTerm =>
+              expandTerm(resTerm) {resTerm =>
+                cont(TypedLet(x, xTerm, resTerm) :- typ)
+              }
+            }
+          case TypedSel(x, a) =>
+            cont(TypedSel(x, a) :- typ)
+          case TypedObj(x, xType, body) =>
+            expandDef(body) {body =>
+              cont(TypedObj(x, xType, body) :- typ)
+            }
+          case TypedFun(x, xType, body) =>
+            expandTerm(body) {body =>
+              cont(TypedFun(x, xType, body) :- typ)
+            }
+          case TypedTApp(funTerm, argDef) =>
+            expandTerm(funTerm) {funTerm =>
+              expandDef(argDef) {argDef =>
+                cont(TypedTApp(funTerm, argDef)   :- typ)
+              }
+            }
+        }
+      }
+    }
+
+    def prototypeToType(prototype: Prototype): (Type, Set[Symbol]) = prototype match {
+      case Que =>
+        val ts = newTypeSymbol()
+        (TypeSymbol(ts), Set(ts))
+      case FunType(x, xType, xResType) =>
+        val (newXType, leftSet) = prototypeToType(xType)
+        val (newXResType, rightSet) = prototypeToType(xResType)
+        (FunType(x, newXType, newXResType), leftSet ++ rightSet)
+      case RecType(x, xType) =>
+        val (newXType, innerSet) = prototypeToType(xType)
+        (RecType(x, newXType), innerSet)
+      case AndType(left, right) =>
+        val (newLeft, leftSet) = prototypeToType(left)
+        val (newRight, rightSet) = prototypeToType(right)
+        (AndType(newLeft, newRight), leftSet ++ rightSet)
+      case FieldDecl(a, aType) =>
+        val (newAType, innerSet) = prototypeToType(aType)
+        (FieldDecl(a, newAType), innerSet)
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        val (newALowerType, leftSet) = prototypeToType(aLowerType)
+        val (newAUpperType, rightSet) = prototypeToType(aUpperType)
+        (TypeDecl(a, newALowerType, newAUpperType), leftSet ++ rightSet)
+      case typ => (typ, Set())
+    }
+
+    def typeSymbolPatternToTypeProjPattern(typ: Type, solveSet: Set[Symbol], r: Int): Type = typ match {
+      case TypeSymbol(ts) if solveSet(ts) =>
+        TypeProj(r, ts)
+      case FunType(x, xType, xResType) =>
+        FunType(x,
+          typeSymbolPatternToTypeProjPattern(xType, solveSet, r),
+          typeSymbolPatternToTypeProjPattern(xResType, solveSet, r))
+      case RecType(x, xType) =>
+        RecType(x, typeSymbolPatternToTypeProjPattern(xType, solveSet, r))
+      case AndType(left, right) =>
+        AndType(
+         typeSymbolPatternToTypeProjPattern(left, solveSet, r),
+         typeSymbolPatternToTypeProjPattern(right, solveSet, r))
+      case FieldDecl(a, aType) =>
+        FieldDecl(a,  typeSymbolPatternToTypeProjPattern(aType, solveSet, r))
+      case TypeDecl(a, aLowerType, aUpperType) =>
+        TypeDecl(a,
+         typeSymbolPatternToTypeProjPattern(aLowerType, solveSet, r),
+         typeSymbolPatternToTypeProjPattern(aUpperType, solveSet, r))
+      case typ => typ
+    }
+
+    def gatherConstraint(scope: Scope, zOption: Option[Symbol], solveSet: Set[Symbol], lower: Type, upper: Type)(cont: Constraint => Unit): Unit = {
+      expand(lower, solveSet) { lower =>
+        expand(upper, solveSet) { upper =>
+          val directlyUsedVars = NoFuture.allFreeVarsInType(lower) ++ NoFuture.allFreeVarsInType(upper)
+          expandScope(scope, directlyUsedVars, solveSet) { relevantScope =>
+            // TODO make NoFuture.gather use TypeSymbol instead of TypeProj
+            // for unknown-types-that-are-being-solved-for.
+            val r = -1
+            if (relevantScope.contains(r))
+              throw new TypecheckingError(s"var $r is already in use")
+            val newLower = typeSymbolPatternToTypeProjPattern(lower, solveSet, r)
+            val newUpper = typeSymbolPatternToTypeProjPattern(upper, solveSet, r)
+            val newSolveSet = solveSet.map{ts => TypeProj(r, ts)}
+            val constraint = NoFuture.gatherConstraints(relevantScope, newSolveSet, zOption, newLower, newUpper, patternIsLeft=false) // TODO simplify(lowerType)?
+            cont(constraint)
+          }
+        }
+      }
+    }
+    def solveConstraint(topScope: Scope, zOption: Option[Symbol], solveSet: Set[Symbol], solveSetVariance: Map[Symbol, Variance], constraint: Constraint, topVariance: Variance, typ: Type): Unit = {
+      def freeVarsInConstraint(constraint: Constraint): Set[Symbol] = constraint match {
+        case OrConstraint(left, right) =>
+          freeVarsInConstraint(left) ++ freeVarsInConstraint(right)
+        case AndConstraint(left, right) =>
+          freeVarsInConstraint(left) ++ freeVarsInConstraint(right)
+        case MultiAndConstraint(m) =>
+          m.flatMap{case (p, (s, l, u)) => s.keySet}.toSet.intersect(topScope.keySet)
+        case TrueConstraint => Set()
+        case FalseConstraint => Set()
+      }
+      expand(typ, solveSet) { typ =>
+        expandScope(topScope, freeVarsInConstraint(constraint), solveSet) { relevantScope =>
+          val r = -1
+          val newSolveSet = solveSet.map{ts => TypeProj(r, ts)}
+          val newSolveSetVariance = solveSetVariance.map{case (ts, v) => TypeProj(r, ts) -> v}
+          val resOpt = NoFuture.solveConstraint2(relevantScope, zOption, newSolveSet, newSolveSetVariance, constraint, typeSymbolPatternToTypeProjPattern(typ, solveSet, r), topVariance)
+          resOpt match {
+            case Some(res) =>
+              res.foreach{case (TypeProj(_, ts), tsType) =>
+                setTypeSymbol(ts, tsType)
+              }
+            case None =>
+              throw new TypecheckingError()
+          }
+        }
+      }
+    }
+
+    def gatherVariance(solveSet: Set[Symbol], typ: Type, variance: Variance)(cont: Map[Symbol, Variance] => Unit): Unit = {
+      def inner(solveSet: Set[Symbol], typ: Type, variance: Variance): Map[Symbol, Variance] = typ match {
+        case FunType(x, xType, xResType) =>
+          mapUnion(
+            inner(solveSet, xType, reverseVariance(variance)),
+            inner(solveSet,xResType, variance)
+          ){mergeVariance(_, _)}
+        case AndType(left, right) =>
+          mapUnion(
+            inner(solveSet, left, variance),
+            inner(solveSet, right, variance)
+          ){mergeVariance(_, _)}
+        case TypeDecl(a, aLowerType, aUpperType) =>
+          mapUnion(
+            inner(solveSet, aLowerType, reverseVariance(variance)),
+            inner(solveSet, aUpperType, variance)
+          ){mergeVariance(_, _)}
+        case FieldDecl(a, aType) =>
+          inner(solveSet, aType, variance)
+        case TypeSymbol(ts) if solveSet(ts) =>
+          Map(ts -> variance)
+        case _ => Map()
+      }
+
+      expand(typ, solveSet){typ =>
+        cont(inner(solveSet, typ, variance))
+      }
+    }
+
+    def raise(scope: Scope, zOption: Option[Symbol], solveSet: Set[Symbol], lower: Type, upper: Type): Unit = {
+      val variance = Covariant
+      gatherVariance(solveSet, upper, variance) { solveSetVariance =>
+        gatherConstraint(scope, zOption, solveSet, lower, upper) { constraint =>
+          solveConstraint(scope, zOption, solveSet, solveSetVariance, constraint, variance, upper)
+        }
+      }
+    }
+
+    /** Find the least supertype of `typ` such that `killSet` is not free.
+     * The result will be put to `typeMapCellCompleter` as `ts`.
+     */
+    def elimUp(scope: Scope, killSet: Set[Symbol], zOption: Option[Symbol], typ: Type, ts: Symbol): Unit = {
+      expand(typ) { typ =>
+        val directlyUsedVars = NoFuture.allFreeVarsInType(typ)
+        expandScope(scope, directlyUsedVars) { relevantScope =>
+          setTypeSymbol(ts, NoFuture.eliminateVars(relevantScope, killSet, zOption, typ))
+        }
+      }
+    }
+
+    def typeRenameVar(fromVar: Symbol, toVar: Symbol, typ: Type, ts: Symbol): Unit = {
+      expand(typ) { typ =>
+        setTypeSymbol(ts, NoFuture.typeRenameVar(fromVar, toVar, typ))
+      }
+    }
+
+    def typecheckDef(d: Typed.Def, prototype: Prototype = Que, scope: Scope = Map()): Unit = (d, prototype) match {
+      case (TypedAndDef(left, right) :- TypeSymbol(ts), p) =>
+        val (typ, solveSet) = prototypeToType(p)
+        setTypeSymbol(ts, typ)
+
+        val leftDom = NoFuture.dom(left)
+        val rightDom = NoFuture.dom(right)
+        val overlap = leftDom.intersect(rightDom)
+        if (!overlap.isEmpty)
+          throw new TypecheckingError(s"overlapping doms: $overlap")
+
+        val stdPrototype = NoFuture.objStdDecl(scope, -1, p) // NOTE: expect any rectypes and typesymbols to have been unwrapped.
+
+        val missingDefs = stdPrototype.dom -- (leftDom ++ rightDom)
+        if (!missingDefs.isEmpty)
+          throw new TypecheckingError(s"missing defs: $missingDefs")
+
+
+        val (leftStdPrototype, rightStdPrototype) = stdPrototype.split(leftDom, rightDom)
+        val leftPrototype = leftStdPrototype.toType
+        val rightPrototype = rightStdPrototype.toType
+
+        typecheckDef(left, leftPrototype, scope)
+        typecheckDef(right, leftPrototype, scope)
+
+        raise(scope, None, solveSet, AndType(left.typ, right.typ), typ)
+
+      case (TypedFieldDef(a, aTerm) :- TypeSymbol(ts), Que) =>
+        setTypeSymbol(ts, FieldDecl(a, aTerm.typ))
+        typecheckTerm(aTerm, Que, scope)
+      case (TypedFieldDef(a, aTerm) :- TypeSymbol(ts), Top) =>
+        setTypeSymbol(ts, Top)
+        typecheckTerm(aTerm, Top, scope)
+      case (TypedFieldDef(a, aTerm) :- TypeSymbol(ts), FieldDecl(b, bPrototype)) if a == b =>
+        val (typ, solveSet) = prototypeToType(FieldDecl(a, bPrototype))
+        setTypeSymbol(ts, typ)
+
+        typecheckTerm(aTerm, bPrototype, scope)
+
+        raise(scope, None, solveSet, FieldDecl(a, aTerm.typ), typ)
+
+      case (TypedTypeDef(a, aType) :- TypeSymbol(ts), Top) =>
+        setTypeSymbol(ts, Top)
+      case (TypedTypeDef(a, aType) :- TypeSymbol(ts), p) =>
+        val (typ, solveSet) = prototypeToType(p)
+        setTypeSymbol(ts, typ)
+        raise(scope, None, solveSet, TypeDecl(a, aType, aType), typ)
+
+      case _ => ???
+    }
+
+    def typecheckTerm(term: Typed.Term, prototype: Prototype = Que, scope: Scope = Map()): Unit = (term, prototype) match {
+      case (TypedVar(x) :- TypeSymbol(ts), p) =>
+        val (typ, solveSet) = prototypeToType(p)
+        setTypeSymbol(ts, typ)
+        raise(scope, Some(x), solveSet, scope(x), typ)
+
+      case (TypedLet(x, xTerm, resTerm) :- TypeSymbol(ts), p) =>
+        if (scope.contains(x)) ??? // TODO rename
+
+        launch{
+          typecheckTerm(xTerm, Que, scope)
+        }
+
+        launch {
+          typecheckTerm(resTerm, p, scope + (x -> xTerm.typ))
+        }
+
+        // TODO when resTerm.typ complete,
+        // setTypeSymbol(ts, elimUp(scope + (x -> xTerm.typ), resTerm.typ, zOption, resTerm.typ))
+
+        val zOption = resTerm.term match {
+          case TypedVar(z) => Some(z)
+          case _           => None
+        }
+        elimUp(scope + (x -> xTerm.typ), Set(x), zOption, resTerm.typ, ts)
+
+      case (TypedSel(x, a) :- TypeSymbol(ts), p) =>
+        val (aType, solveSet) = prototypeToType(p)
+        setTypeSymbol(ts, aType)
+
+        raise(scope, Some(x), solveSet, scope(x), FieldDecl(a, aType))
+
+      case (TypedApp(x, y) :- TypeSymbol(ts), p) =>
+        val (appResType, solveSet2) = prototypeToType(p)
+        setTypeSymbol(ts, appResType)
+
+
+        val z = su.newSymbol()
+        val (funType @ FunType(_, funArgType, funResType), solveSet) = prototypeToType(FunType(z, Que, Que))
+
+        gatherVariance(solveSet, funType, Covariant) { solveSetVariance  =>
+          gatherConstraint(scope, Some(x), solveSet, scope(x), funType) { c1 =>
+            gatherConstraint(scope, Some(y), solveSet, scope(y), funArgType) { c2 => // TODO vs allow arg to constrain function? e.g. overloading.
+              solveConstraint(scope, Some(x), solveSet, solveSetVariance, AndConstraint(c1, c2), Covariant, funType)
+            }
+          }
+        }
+
+        val ts1 = newTypeSymbol()
+        typeRenameVar(z, y, funResType, ts1)
+        raise(scope, None, solveSet2, TypeSymbol(ts1), appResType)
+
+      case (TypedFun(x, xType, resTerm) :- TypeSymbol(ts), Que) =>
+        setTypeSymbol(ts, FunType(x, xType, resTerm.typ))
+        typecheckTerm(resTerm, Que, scope + (x -> xType))
+
+      // TODO TypedFun with p=TypeProj, p=AndType, etc...
+
+      case (TypedFun(x, xType, resTerm) :- TypeSymbol(ts), Top) =>
+        setTypeSymbol(ts, Top)
+        typecheckTerm(resTerm, Top, scope + (x -> xType))
+
+      case (TypedFun(x, xType, xResType) :- TypeSymbol(ts), FunType(y, _, _)) if x != y =>
+        ??? // TODO rename y to x and back?
+
+      case (TypedFun(x, xType, resTerm) :- TypeSymbol(ts), p @ FunType(y, argPrototype, resPrototype)) if x == y =>
+        val (funType, solveSet) = prototypeToType(p)
+        setTypeSymbol(ts, funType)
+
+        typecheckTerm(resTerm, resPrototype, scope + (x -> xType))
+
+        raise(scope, None, solveSet, FunType(x, xType, resTerm.typ), funType)
+
+      case (TypedObj(x, xType, defs) :- TypeSymbol(ts), p) =>
+        val (objType, solveSet) = prototypeToType(p)
+        raise(scope, None, solveSet, RecType(x, xType), objType)
+
+        val localScope = scope + (x -> xType)
+        val std = NoFuture.objStdDecl(localScope, x, xType)
+        typecheckDef(defs, std.toType, localScope)
+
+      // TODO TApp, etc.
+      case _ =>
+        ???
+    }
+
+    def run[T >: Null](f: ((T) => Unit) => Unit): Option[T] = {
+      val rootPromise = Promise[Option[T]]()
+      launch {
+        val rootCell = contFuture[T](f)
+        onComplete(rootCell){rootType =>
+          val res = if (hasErrorsAtom.get()) None else Some(rootType)
+          rootPromise.success(res)
+        }
+      }
+      try {
+        Await.result(pool.quiescentIncompleteCells, 10.seconds)
+        typeSymbolCellCompleters.putFinal(Map()) // TODO hack.
+        val incompleteCellsAtTheEnd = Await.result(pool.quiescentIncompleteCells, 10.seconds)
+        if (incompleteCellsAtTheEnd.size != 0) {
+          if (hasErrorsAtom.get())
+            throw new NotImplementedError("quiescent with incomplete cells AND errors")
+          else
+            throw new TimeoutException("quiescent with incomplete cells")
+          None
+        }
+        await(rootPromise.future)
+      } catch {
+        case e: TimeoutException => e.printStackTrace(); None
+        case e: NotImplementedError => e.printStackTrace(); None
+      }
+    }
 
   } // end class Parallel
 
-  def typecheckInParallel(symbolUniverse: SymbolUniverse, rootExpr: Term, rootPrototype: Prototype = Que, rootScope: Map[Symbol, Type] = Map()): Option[Term] = {
-    ???
-//    val pool         = new HandlerPool(1) // TODO
-//    val typeChecker  = Parallel(symbolUniverse, pool, new AtomicBoolean(false))
-//    typeChecker.run[Term]{cont =>
-//      val lazyTypedTerm = typeChecker.typecheckTerm(rootExpr, rootPrototype, rootScope)
-//      typeChecker.expandTermFutures(lazyTypedTerm) { typedTerm =>
-//        cont(typedTerm)
-//      }
-//    }
+  def typecheckInParallel(su: SymbolUniverse, rootExpr: Term, rootPrototype: Prototype = Que, rootScope: Map[Symbol, Type] = Map(), parallelism: Int = 1): Option[Typed.Term] = {
+    val par = Parallel(su, parallelism)
+
+    par.run[Typed.Term]{cont =>
+      val typedTerm = par.annotateTerm(rootExpr)
+      par.typecheckTerm(typedTerm, rootPrototype, rootScope)
+      par.expandTerm(typedTerm)(cont)
+    ////  val lazyTypedTerm = par.typecheckTerm(rootExpr, rootPrototype, rootScope)
+    ////  ???
+    ////  //par.expandTermFutures(lazyTypedTerm) { typedTerm =>
+    ////  //  cont(typedTerm)
+    ////  //}
+    }
   }
 }
