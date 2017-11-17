@@ -142,6 +142,19 @@ object DolTypecheckingSpec extends Properties("DolTypecheckingSpec") { // TODO R
     }
   }
 
+  property("meh") = {
+    val generator: Gen[(GlobalContext, InferenceProblem.Term)] = for{
+      ctx1  <- genGlobalScope()
+      (ctx2, problem) <- Gen.resize(100000, genInferenceProblemFromPrototype(ctx1, Map(), Que)) if InferenceProblem.assemble(ctx2, problem).term.totNumNodes >= 1000
+    } yield (ctx2, problem)
+    Prop.forAllNoShrink(generator){ case (ctx, problem) =>
+      val p = InferenceProblem.assemble(ctx, problem)
+      prettyNamed("input", p) |: Prop.protect{
+        false
+      }
+    }
+  }
+
 
   // TODO
 //  property("positiveParallelInferenceProblem") = {

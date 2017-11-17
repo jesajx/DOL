@@ -83,7 +83,7 @@ object Dol {
     val treeHeight = 1
     val totNumNodes = 1
   }
-  final case class Let(x: Symbol, xTerm: Term, resTerm: Term) extends Term {
+  case class Let(x: Symbol, xTerm: Term, resTerm: Term) extends Term {
     val treeHeight = 1 + math.max(xTerm.treeHeight, resTerm.treeHeight)
     val totNumNodes = 1 + xTerm.totNumNodes + resTerm.totNumNodes
   }
@@ -171,33 +171,73 @@ object Dol {
     type Term = Typed.Term.:-
     type Def  = Typed.Def.:-
     object Term {
-      sealed case class :-(term: TypedTermLHS, typ: Type)
+      sealed case class :-(term: TypedTermLHS, typ: Type) {
+        val treeHeight = 1 + math.max(term.treeHeight, typ.treeHeight)
+        val totNumNodes = 1 + term.totNumNodes + typ.totNumNodes
+      }
     }
 
     object Def {
-      sealed case class :-(d: TypedDefLHS, typ: Type)
+      sealed case class :-(d: TypedDefLHS, typ: Type) {
+        val treeHeight = 1 + math.max(d.treeHeight, typ.treeHeight)
+        val totNumNodes = 1 + d.totNumNodes + typ.totNumNodes
+      }
     }
   }
 
   sealed trait TypedTermLHS {
     def :-(typ: Type) = Typed.Term.:-(this, typ)
+    val treeHeight: Int
+    val totNumNodes: Int
   }
   sealed trait TypedDefLHS {
     def :-(typ: Type) = Typed.Def.:-(this, typ)
+    val treeHeight: Int
+    val totNumNodes: Int
   }
 
-  case class TypedVar(x: Symbol)                                         extends TypedTermLHS
-  case class TypedApp(x: Symbol, y: Symbol)                              extends TypedTermLHS
-  case class TypedLet(x: Symbol, xTerm: Typed.Term, resTerm: Typed.Term) extends TypedTermLHS
-  case class TypedSel(x: Symbol, a: Symbol)                              extends TypedTermLHS
-  case class TypedFun(x: Symbol, xType: Type, body: Typed.Term)          extends TypedTermLHS
-  case class TypedObj(x: Symbol, xType: Type, body: Typed.Def)           extends TypedTermLHS
+  case class TypedVar(x: Symbol)                                         extends TypedTermLHS {
+    val treeHeight = 1
+    val totNumNodes = 1
+  }
+  case class TypedApp(x: Symbol, y: Symbol)                              extends TypedTermLHS {
+    val treeHeight = 1
+    val totNumNodes = 1
+  }
+  case class TypedLet(x: Symbol, xTerm: Typed.Term, resTerm: Typed.Term) extends TypedTermLHS {
+    val treeHeight = 1 + math.max(xTerm.treeHeight, resTerm.treeHeight)
+    val totNumNodes = 1 + xTerm.totNumNodes + resTerm.totNumNodes
+  }
+  case class TypedSel(x: Symbol, a: Symbol)                              extends TypedTermLHS {
+    val treeHeight = 1
+    val totNumNodes = 1
+  }
+  case class TypedFun(x: Symbol, xType: Type, body: Typed.Term)          extends TypedTermLHS {
+    val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
+    val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
+  }
+  case class TypedObj(x: Symbol, xType: Type, body: Typed.Def)           extends TypedTermLHS {
+    val treeHeight = 1 + math.max(xType.treeHeight, body.treeHeight)
+    val totNumNodes = 1 + xType.totNumNodes + body.totNumNodes
+  }
 
-  case class TypedFieldDef(a: Symbol, aTerm: Typed.Term)    extends TypedDefLHS
-  case class TypedTypeDef(a: Symbol, aType: Type)           extends TypedDefLHS
-  case class TypedAndDef(left: Typed.Def, right: Typed.Def) extends TypedDefLHS
+  case class TypedFieldDef(a: Symbol, aTerm: Typed.Term)    extends TypedDefLHS {
+    val treeHeight = 1 + aTerm.treeHeight
+    val totNumNodes = 1 + aTerm.totNumNodes
+  }
+  case class TypedTypeDef(a: Symbol, aType: Type)           extends TypedDefLHS {
+    val treeHeight = 1 + aType.treeHeight
+    val totNumNodes = 1 + aType.totNumNodes
+  }
+  case class TypedAndDef(left: Typed.Def, right: Typed.Def) extends TypedDefLHS {
+    val treeHeight = 1 + math.max(left.treeHeight, right.treeHeight)
+    val totNumNodes = 1 + left.totNumNodes + right.totNumNodes
+  }
 
-  case class TypedTApp(t: Typed.Term, d: Typed.Def) extends TypedTermLHS
+  case class TypedTApp(t: Typed.Term, d: Typed.Def) extends TypedTermLHS {
+    val treeHeight = 1 + d.treeHeight
+    val totNumNodes = 1 + d.totNumNodes
+  }
 
   object :- {
     def apply(lhs: TypedTermLHS, rhs: Type): Typed.Term = lhs :- rhs
@@ -756,7 +796,7 @@ object Dol {
       case AndConstraint(left, right) =>
         for {
           a <- dnfStream(left)
-          b <- dnfStream(right)
+          b <- dnfStream(right) // TODO this should be recomputed for each `a` in order to save memory. I.e. don't store the stream.
           z <- mergeConstraintsOption(a, b).toStream
         } yield z
       case OrConstraint(left, right) => dnfStream(left) #::: dnfStream(right)
@@ -2630,7 +2670,7 @@ object Dol {
 
   case class Parallel(val su: SymbolUniverse, parallelism: Int = 1) {
 
-    val hasErrorsAtom:  AtomicBoolean = new AtomicBoolean(false)
+    val hasErrorsAtom: AtomicBoolean = new AtomicBoolean(false)
 
     val pool = new HandlerPool(parallelism, {(e: Throwable) =>
       e.printStackTrace() // TODO vs store exception
@@ -2646,13 +2686,21 @@ object Dol {
      */
     //val typeMapCellCompleter: DefaultCellCompleter[TypeMap] = newCellCompleter(pool, TypeMapLattice)
 
-    // TODO maybe pu everything in a single big lattice like:
+    // TODO maybe put everything in a single big lattice like:
     // Map[TypeSymbol, Thing]
-    // Done <: Thing
     // Unknown <: Thing
     // Dep(dependencies: Set[TypeSymbol], action: => Unit) <: Thing
-    // Waiting <: Thing
+    // Done(typ: Type) <: Thing
     //
+    // Then we can move all callbacks into big.onNext
+
+    // TODO maybe put everything in a single big lattice like:
+    // Map[TypeSymbol, Thing]
+    // ThingConstraint(constraint: Constraint) <: Thing
+    // Unknown <: Thing
+    // Done(typ: Type) <: Thing
+    //
+    // Then we can move all callbacks into big.onNext
 
     val typeSymbolCellCompleters: DefaultCellCompleter[Map[Symbol, DefaultCellCompleter[Type]]] = newCellCompleter(pool, DumbTypeMapLattice)
 
@@ -2738,6 +2786,11 @@ object Dol {
       typeSymbolCellCompleters.cell.getResult()(ts).putFinal(typ)
 
     def launch(f: => Unit): Unit = pool.execute{() => f}
+
+    def parIf(c: Boolean)(f: => Unit): Unit =
+      if (c) pool.execute{() => f} else f
+
+    val parMinTotNumNodes = 1 // TODO
 
     def contCell[T](lattice: Lattice[T])(f: (T => Unit) => Unit): DefaultCell[T] = {
       val completer = newCellCompleter(pool, lattice)
@@ -3271,8 +3324,12 @@ object Dol {
         val leftPrototype = leftStdPrototype.toType
         val rightPrototype = rightStdPrototype.toType
 
-        typecheckDef(left, leftPrototype, scope)
-        typecheckDef(right, leftPrototype, scope)
+        parIf(left.totNumNodes >= parMinTotNumNodes) {
+          typecheckDef(left, leftPrototype, scope)
+        }
+        parIf(right.totNumNodes >= parMinTotNumNodes) {
+          typecheckDef(right, leftPrototype, scope)
+        }
 
         raise(scope, None, solveSet, AndType(left.typ, right.typ), typ)
 
@@ -3286,7 +3343,9 @@ object Dol {
         val (typ, solveSet) = prototypeToType(FieldDecl(a, bPrototype))
         setTypeSymbol(ts, typ)
 
-        typecheckTerm(aTerm, bPrototype, scope)
+        launch {
+          typecheckTerm(aTerm, bPrototype, scope)
+        }
 
         raise(scope, None, solveSet, FieldDecl(a, aTerm.typ), typ)
 
@@ -3304,53 +3363,61 @@ object Dol {
       case (TypedVar(x) :- TypeSymbol(ts), p) =>
         val (typ, solveSet) = prototypeToType(p)
         setTypeSymbol(ts, typ)
-        raise(scope, Some(x), solveSet, scope(x), typ)
+        launch {
+          raise(scope, Some(x), solveSet, scope(x), typ)
+        }
 
       case (TypedLet(x, xTerm, resTerm) :- TypeSymbol(ts), p) =>
         if (scope.contains(x)) ??? // TODO rename
 
-        launch{
+        parIf(xTerm.totNumNodes >= parMinTotNumNodes) {
           typecheckTerm(xTerm, Que, scope)
         }
 
-        launch {
+        parIf(resTerm.totNumNodes >= parMinTotNumNodes) {
           typecheckTerm(resTerm, p, scope + (x -> xTerm.typ))
         }
 
         // TODO when resTerm.typ complete,
         // setTypeSymbol(ts, elimUp(scope + (x -> xTerm.typ), resTerm.typ, zOption, resTerm.typ))
 
-        val zOption = resTerm.term match {
-          case TypedVar(z) => Some(z)
-          case _           => None
+        launch {
+          val zOption = resTerm.term match {
+            case TypedVar(z) => Some(z)
+            case _           => None
+          }
+          elimUp(scope + (x -> xTerm.typ), Set(x), zOption, resTerm.typ, ts)
         }
-        elimUp(scope + (x -> xTerm.typ), Set(x), zOption, resTerm.typ, ts)
 
       case (TypedSel(x, a) :- TypeSymbol(ts), p) =>
         val (aType, solveSet) = prototypeToType(p)
         setTypeSymbol(ts, aType)
-
-        raise(scope, Some(x), solveSet, scope(x), FieldDecl(a, aType))
+        launch {
+          raise(scope, Some(x), solveSet, scope(x), FieldDecl(a, aType))
+        }
 
       case (TypedApp(x, y) :- TypeSymbol(ts), p) =>
         val (appResType, solveSet2) = prototypeToType(p)
         setTypeSymbol(ts, appResType)
 
-
         val z = su.newSymbol()
         val (funType @ FunType(_, funArgType, funResType), solveSet) = prototypeToType(FunType(z, Que, Que))
 
-        gatherVariance(solveSet, funType, Covariant) { solveSetVariance  =>
-          gatherConstraint(scope, Some(x), solveSet, scope(x), funType) { c1 =>
-            gatherConstraint(scope, Some(y), solveSet, scope(y), funArgType) { c2 => // TODO vs allow arg to constrain function? e.g. overloading.
-              solveConstraint(scope, Some(x), solveSet, solveSetVariance, AndConstraint(c1, c2), Covariant, funType)
+        launch {
+          gatherVariance(solveSet, funType, Covariant) { solveSetVariance  =>
+            gatherConstraint(scope, Some(x), solveSet, scope(x), funType) { c1 =>
+              gatherConstraint(scope, Some(y), solveSet, scope(y), funArgType) { c2 => // TODO vs allow arg to constrain function? e.g. overloading.
+                solveConstraint(scope, Some(x), solveSet, solveSetVariance, AndConstraint(c1, c2), Covariant, funType)
+              }
             }
           }
         }
 
-        val ts1 = newTypeSymbol()
-        typeRenameVar(z, y, funResType, ts1)
-        raise(scope, None, solveSet2, TypeSymbol(ts1), appResType)
+        launch {
+          val ts1 = newTypeSymbol()
+          typeRenameVar(z, y, funResType, ts1)
+          raise(scope, None, solveSet2, TypeSymbol(ts1), appResType)
+        }
 
       case (TypedFun(x, xType, resTerm) :- TypeSymbol(ts), Que) =>
         setTypeSymbol(ts, FunType(x, xType, resTerm.typ))
@@ -3369,17 +3436,22 @@ object Dol {
         val (funType, solveSet) = prototypeToType(p)
         setTypeSymbol(ts, funType)
 
-        typecheckTerm(resTerm, resPrototype, scope + (x -> xType))
-
-        raise(scope, None, solveSet, FunType(x, xType, resTerm.typ), funType)
+        parIf(resTerm.totNumNodes >= parMinTotNumNodes) {
+          typecheckTerm(resTerm, resPrototype, scope + (x -> xType))
+          raise(scope, None, solveSet, FunType(x, xType, resTerm.typ), funType)
+        }
 
       case (TypedObj(x, xType, defs) :- TypeSymbol(ts), p) =>
-        val (objType, solveSet) = prototypeToType(p)
-        raise(scope, None, solveSet, RecType(x, xType), objType)
+        setTypeSymbol(ts, RecType(x, xType))
 
-        val localScope = scope + (x -> xType)
-        val std = NoFuture.objStdDecl(localScope, x, xType)
-        typecheckDef(defs, std.toType, localScope)
+        launch {
+          val (objType, solveSet) = prototypeToType(p)
+          raise(scope, None, solveSet, RecType(x, xType), objType)
+
+          val localScope = scope + (x -> xType)
+          val std = NoFuture.objStdDecl(localScope, x, xType)
+          typecheckDef(defs, std.toType, localScope)
+        }
 
       // TODO TApp, etc.
       case _ =>
