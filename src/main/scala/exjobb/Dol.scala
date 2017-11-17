@@ -2790,7 +2790,7 @@ object Dol {
     def parIf(c: Boolean)(f: => Unit): Unit =
       if (c) pool.execute{() => f} else f
 
-    val parMinTotNumNodes = 1 // TODO
+    val parMinTotNumNodes = 10 // TODO
 
     def contCell[T](lattice: Lattice[T])(f: (T => Unit) => Unit): DefaultCell[T] = {
       val completer = newCellCompleter(pool, lattice)
@@ -3363,9 +3363,7 @@ object Dol {
       case (TypedVar(x) :- TypeSymbol(ts), p) =>
         val (typ, solveSet) = prototypeToType(p)
         setTypeSymbol(ts, typ)
-        launch {
-          raise(scope, Some(x), solveSet, scope(x), typ)
-        }
+        raise(scope, Some(x), solveSet, scope(x), typ)
 
       case (TypedLet(x, xTerm, resTerm) :- TypeSymbol(ts), p) =>
         if (scope.contains(x)) ??? // TODO rename
@@ -3376,12 +3374,10 @@ object Dol {
 
         parIf(resTerm.totNumNodes >= parMinTotNumNodes) {
           typecheckTerm(resTerm, p, scope + (x -> xTerm.typ))
-        }
 
-        // TODO when resTerm.typ complete,
-        // setTypeSymbol(ts, elimUp(scope + (x -> xTerm.typ), resTerm.typ, zOption, resTerm.typ))
+          // TODO when resTerm.typ complete,
+          // setTypeSymbol(ts, elimUp(scope + (x -> xTerm.typ), resTerm.typ, zOption, resTerm.typ))
 
-        launch {
           val zOption = resTerm.term match {
             case TypedVar(z) => Some(z)
             case _           => None
